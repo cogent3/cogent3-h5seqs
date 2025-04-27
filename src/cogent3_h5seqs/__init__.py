@@ -163,9 +163,9 @@ def _set_reversed_seqs(h5file, reverse_seqs: frozenset[str] | None) -> None:
 
 
 def duplicate_h5_file(
-    *, h5file: h5py.File, source: str | pathlib.Path, in_memory: bool
+    *, h5file: h5py.File, path: str | pathlib.Path, in_memory: bool
 ) -> h5py.File:
-    result = open_h5_file(path=source, mode="w", in_memory=in_memory)
+    result = open_h5_file(path=path, mode="w", in_memory=in_memory)
     for grp in h5file:
         h5file.copy(grp, result)
     for attr in h5file.attrs:
@@ -293,7 +293,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         reversed_seqs: set[str] | None = None,
     ) -> typing_extensions.Self:
         if data is None:
-            data = duplicate_h5_file(h5file=self._file, source="memory", in_memory=True)
+            data = duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
         alphabet = alphabet or self.alphabet
         offset = offset or self.offset
         reversed_seqs = reversed_seqs or self.reversed_seqs
@@ -471,9 +471,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         **kwargs,
     ) -> typing_extensions.Self:
         # make in memory
-        source = kwargs.pop("source", "memory")
+        path = kwargs.pop("path", "memory")
         return make_unaligned(
-            source,
+            path,
             mode="w",
             in_memory=True,
             data=data,
@@ -510,16 +510,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if path == curr_path:
             # nothing to do
             return
-        output = duplicate_h5_file(h5file=self._file, source=path, in_memory=False)
+        output = duplicate_h5_file(h5file=self._file, path=path, in_memory=False)
         output.close()
 
-    def write(self, source: str | pathlib.Path) -> None:
+    def write(self, path: str | pathlib.Path) -> None:
         """Write the UnalignedSeqsData object to a file"""
-        if source.suffix != f".{UNALIGNED_SUFFIX}":
+        if path.suffix != f".{UNALIGNED_SUFFIX}":
             raise ValueError(
-                f"path {source} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
+                f"path {path} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
             )
-        self._write(path=source)
+        self._write(path=path)
 
 
 class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
@@ -607,10 +607,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         alphabet
             alphabet object for the sequences
         """
-        # need to support providing a path as source
-        source = kwargs.pop("source", None)
+        # need to support providing a path
+        path = kwargs.pop("path", None)
         mode = kwargs.pop("mode", "w")
-        return make_aligned(source, data=data, alphabet=alphabet, mode=mode, **kwargs)
+        return make_aligned(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
 
     @classmethod
     def from_names_and_array(
@@ -626,9 +626,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             raise ValueError(msg)
 
         data = {name: data[i] for i, name in enumerate(names)}
-        source = kwargs.pop("source", None)
+        path = kwargs.pop("path", None)
         mode = kwargs.pop("mode", "w")
-        return make_aligned(source, data=data, alphabet=alphabet, mode=mode, **kwargs)
+        return make_aligned(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
 
     @classmethod
     def from_seqs_and_gaps(
@@ -649,9 +649,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             )
             data[seqid] = gapped
 
-        source = kwargs.pop("source", None)
+        path = kwargs.pop("path", None)
         mode = kwargs.pop("mode", "w")
-        return make_aligned(source, data=data, alphabet=alphabet, mode=mode, **kwargs)
+        return make_aligned(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
 
     @classmethod
     def from_storage(
@@ -915,7 +915,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
 @functools.singledispatch
 def make_unaligned(
-    source: str | pathlib.Path | None,
+    path: str | pathlib.Path | None,
     *,
     data=None,
     mode: str = "r",
@@ -924,12 +924,12 @@ def make_unaligned(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
 ):
-    raise NotImplementedError(f"make_unaligned not implemented for {type(source)}")
+    raise NotImplementedError(f"make_unaligned not implemented for {type(path)}")
 
 
 @make_unaligned.register
 def _(
-    source: str,
+    path: str,
     *,
     data=None,
     mode: str = "r",
@@ -938,7 +938,7 @@ def _(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
 ) -> UnalignedSeqsData:
-    h5file = open_h5_file(path=source, mode=mode, in_memory=in_memory)
+    h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
         raise ValueError("alphabet must be provided for write mode")
 
@@ -957,7 +957,7 @@ def _(
 
 @make_unaligned.register
 def _(
-    source: pathlib.Path,
+    path: pathlib.Path,
     *,
     data=None,
     mode: str = "r",
@@ -967,7 +967,7 @@ def _(
     reversed_seqs: frozenset[str] | None = None,
 ) -> UnalignedSeqsData:
     return make_unaligned(
-        str(source.expanduser()),
+        str(path.expanduser()),
         data=data,
         mode=mode,
         in_memory=in_memory,
@@ -979,7 +979,7 @@ def _(
 
 @make_unaligned.register
 def _(
-    source: None,
+    path: None,
     *,
     data=None,
     mode: str = "r",
@@ -992,7 +992,7 @@ def _(
     mode = "w"
     in_memory = True
     return make_unaligned(
-        source="memory",
+        path="memory",
         data=data,
         mode=mode,
         in_memory=in_memory,
@@ -1003,7 +1003,7 @@ def _(
 
 
 def make_aligned(
-    source: str,
+    path: str,
     *,
     data=None,
     mode: str = "r",
@@ -1012,7 +1012,7 @@ def make_aligned(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
 ) -> AlignedSeqsData:
-    h5file = open_h5_file(path=source, mode=mode, in_memory=in_memory)
+    h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
 
     asd = AlignedSeqsData(
         gapped_seqs=h5file,
@@ -1027,20 +1027,20 @@ def make_aligned(
 
 
 def load_seqs_data(
-    source: str | pathlib.Path, mode: str = "r"
+    path: str | pathlib.Path, mode: str = "r"
 ) -> UnalignedSeqsData | AlignedSeqsData:
-    """Load an UnalignedSeqsData object from a file"""
-    source = pathlib.Path(source)
-    if source.suffix == f".{UNALIGNED_SUFFIX}":
+    """load hdf5 sequence data from file"""
+    path = pathlib.Path(path)
+    if path.suffix == f".{UNALIGNED_SUFFIX}":
         klass = UnalignedSeqsData
-    elif source.suffix == f".{ALIGNED_SUFFIX}":
+    elif path.suffix == f".{ALIGNED_SUFFIX}":
         klass = AlignedSeqsData
     else:
         raise ValueError(
-            f"File {source} does not have an expected suffix {UNALIGNED_SUFFIX} or {ALIGNED_SUFFIX}"
+            f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX} or {ALIGNED_SUFFIX}"
         )
 
-    h5file = open_h5_file(path=source, mode="r", in_memory=False)
+    h5file = open_h5_file(path=path, mode=mode, in_memory=False)
     alphabet = h5file.attrs.get("alphabet")
     gap_char = h5file.attrs.get("gap_char")
     missing_char = h5file.attrs.get("missing_char")
@@ -1061,7 +1061,7 @@ def write_seqs_data(
     **kwargs,
 ) -> pathlib.Path:
     if isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)):
-        seqcoll.storage.write(source=path)
+        seqcoll.storage.write(path=path)
 
     supported_suffixes = {ALIGNED_SUFFIX, UNALIGNED_SUFFIX}
     suffix = path.suffix[1:]

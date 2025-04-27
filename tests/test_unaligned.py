@@ -133,7 +133,7 @@ def test_load_invalid(tmp_path):
 def test_make_alignedseqsdata(raw_aligned_data):
     alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
     asd = cogent3_h5seqs.make_aligned(
-        source=None, data=raw_aligned_data, in_memory=True, alphabet=alpha
+        path=None, data=raw_aligned_data, in_memory=True, alphabet=alpha
     )
     assert len(asd) == len(raw_aligned_data["s2"])
     assert asd.names == ("s1", "s2")
@@ -160,5 +160,5 @@ def test_driver_aligned(raw_aligned_data):
 def small_aligned(raw_aligned_data):
     alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
     return cogent3_h5seqs.make_aligned(
-        source=None, data=raw_aligned_data, in_memory=True, alphabet=alpha
+        path=None, data=raw_aligned_data, in_memory=True, alphabet=alpha
     )
