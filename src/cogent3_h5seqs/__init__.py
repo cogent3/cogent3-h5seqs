@@ -252,7 +252,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @__getitem__.register
     def _(self, index: str) -> c3_alignment.SeqDataView:
-        return self.get_view(seqid=index)
+        return self.get_view(index)
 
     @__getitem__.register
     def _(self, index: int) -> c3_alignment.SeqDataView:
@@ -992,7 +992,7 @@ def _(
     mode = "w"
     in_memory = True
     return make_unaligned(
-        path="memory",
+        "memory",
         data=data,
         mode=mode,
         in_memory=in_memory,
