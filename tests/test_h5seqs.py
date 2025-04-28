@@ -391,3 +391,22 @@ def test_write_aligned(raw_aligned_data, storage_backend, tmp_path):
     aln.write(outpath)
     assert outpath.exists()
     assert outpath.is_file()
+
+
+def test_get_positions(raw_aligned_data):
+    c3 = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend=None
+    )
+    h5 = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend="h5seqs_aligned"
+    )
+    assert (c3.array_seqs == h5.array_seqs).all()
+
+
+@pytest.mark.parametrize("arg", ["start", "stop", "step"])
+def test_get_positions_invalid_coord(raw_aligned_data, arg):
+    h5 = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend="h5seqs_aligned"
+    )
+    with pytest.raises(ValueError):
+        h5.storage.get_positions(names=["s1", "s2"], **{arg: -1})

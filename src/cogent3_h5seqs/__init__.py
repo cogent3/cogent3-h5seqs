@@ -772,8 +772,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             msg = f"{start=}, {stop=}, {step=} not >= 1"
             raise ValueError(msg)
 
-        segment = slice(start, stop, step)
-        array_seqs = numpy.empty((len(names), len(segment)), dtype=self.alphabet.dtype)
+        array_seqs = numpy.empty(
+            (len(names), len(range(start, stop, step))), dtype=self.alphabet.dtype
+        )
         for index, name in enumerate(names):
             if name not in self.names:
                 raise KeyError(f"Sequence {name} not found")
