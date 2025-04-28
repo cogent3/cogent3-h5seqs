@@ -429,7 +429,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             offset=self.offset.get(seqid, 0),
         )
 
-    def get_seq_length(self, *, seqid: str) -> int:
+    def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
         if seqid not in self.names:
             raise KeyError(f"Sequence {seqid} not found")
@@ -576,7 +576,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def __len__(self) -> int:
         return self.align_len
 
-    def get_seq_length(self, *, seqid: str) -> int:
+    def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
         if seqid not in self.names:
             raise KeyError(f"Sequence {seqid} not found")
