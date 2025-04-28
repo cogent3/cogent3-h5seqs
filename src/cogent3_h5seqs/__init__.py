@@ -553,7 +553,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @property
     def align_len(self) -> int:
         """length of the alignment"""
-        name = next(iter(self._file[self._gapped_grp]), None)
+        name = next(iter(self._file.get(self._gapped_grp, [])), None)
         return len(self._file[f"{self._gapped_grp}/{name}"]) if name else 0
 
     def __len__(self) -> int:
