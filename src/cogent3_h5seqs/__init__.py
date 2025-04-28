@@ -235,10 +235,12 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def offset(self) -> dict[str, int]:
+        all_offsets = {n: 0 for n in self.names}
         if "offset" not in self._file:
-            return {}
+            return all_offsets
         data = self._file["offset"][:]
-        return {k.decode("utf8"): v for k, v in data}
+
+        return all_offsets | {k.decode("utf8"): int(v) for k, v in data}
 
     @property
     def reversed_seqs(self) -> frozenset[str]:
