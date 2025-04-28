@@ -156,8 +156,6 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if check:
             self._check_file(self._file)
 
-        self._populate_attrs()
-
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._ungapped_grp):
@@ -339,6 +337,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         """
         if not self.writable:
             raise PermissionError("Cannot add sequences to a read-only file")
+
+        self._populate_attrs()
 
         if force_unique_keys and any(name in self.names for name in seqs):
             msg = "One or more sequence names already exist in collection"
@@ -820,6 +820,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         """
         if not self.writable:
             raise PermissionError("Cannot add sequences to a read-only file")
+
+        self._populate_attrs()
 
         if force_unique_keys and any(name in self.names for name in seqs):
             msg = "One or more sequence names already exist in collection"
