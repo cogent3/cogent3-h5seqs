@@ -194,3 +194,19 @@ def h5_aligned_path(small_aligned, tmp_path):
 def test_load_h5_aligned(h5_aligned_path, raw_aligned_data):
     aln = cogent3.load_aligned_seqs(h5_aligned_path, moltype="dna", new_type=True)
     assert aln.to_dict() == raw_aligned_data
+
+
+@pytest.mark.parametrize(
+    "cls", [cogent3_h5seqs.UnalignedSeqsData, cogent3_h5seqs.AlignedSeqsData]
+)
+def test_check_init(cls):
+    h5file = cogent3_h5seqs.open_h5_file(path=None, mode="w", in_memory=True)
+    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+    kwargs = (
+        {"data": h5file}
+        if cls == cogent3_h5seqs.UnalignedSeqsData
+        else {"gapped_seqs": h5file}
+    )
+    with pytest.raises(ValueError):
+        cls(alphabet=alpha, check=True, **kwargs)
+    h5file.close()
