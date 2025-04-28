@@ -559,6 +559,14 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def __len__(self) -> int:
         return self.align_len
 
+    def get_seq_length(self, *, seqid: str) -> int:
+        """Returns the length of the sequence"""
+        if seqid not in self.names:
+            raise KeyError(f"Sequence {seqid} not found")
+        if seqid not in self._ungapped_grp:
+            self._make_gaps_and_ungapped(seqid)
+        return len(self._file[f"{self._ungapped_grp}/{seqid}"])
+
     @classmethod
     def from_seqs(
         cls,
@@ -658,9 +666,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         return cls(gapped_seqs=h5file, alphabet=alphabet)
 
     def _make_gaps_and_ungapped(self, seqid: str) -> None:
-        if (
-            seqid in self._file[self._gaps_grp]
-            and seqid in self._file[self._ungapped_grp]
+        if seqid in self._file.get(self._gaps_grp, {}) and seqid in self._file.get(
+            self._ungapped_grp, {}
         ):
             # job already done
             return

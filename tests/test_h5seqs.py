@@ -243,3 +243,10 @@ def test_make_empty_aligned(dna_alpha):
     )
     assert asd.align_len == 0
     assert len(asd) == 0
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_seq_length(fxt, request, raw_data):
+    obj = request.getfixturevalue(fxt)
+    # seq s2 is the same between the aligned and unaligned examples
+    l = obj.get_seq_length(seqid="s2")
+    expect = len(raw_data["s2"])
+    assert l == expect
