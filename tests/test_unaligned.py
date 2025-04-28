@@ -5,6 +5,11 @@ import pytest
 
 
 @pytest.fixture
+def dna_alpha():
+    return cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+
+
+@pytest.fixture
 def raw_data():
     return {"s1": "ACGG", "s2": "TGGGCAGTA"}
 
@@ -15,23 +20,21 @@ def raw_aligned_data():
 
 
 @pytest.fixture
-def small(raw_data):
-    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+def small(raw_data, dna_alpha):
     return cogent3_h5seqs.make_unaligned(
-        "memory", data=raw_data, in_memory=True, alphabet=alpha
+        "memory", data=raw_data, in_memory=True, alphabet=dna_alpha
     )
 
 
 @pytest.mark.parametrize("offset", [None, {"s1": 2}])
-def test_make_unaligned(raw_data, offset):
-    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+def test_make_unaligned(raw_data, offset, dna_alpha):
     ua = cogent3_h5seqs.make_unaligned(
-        "memory", data=raw_data, in_memory=True, alphabet=alpha, offset=offset
+        "memory", data=raw_data, in_memory=True, alphabet=dna_alpha, offset=offset
     )
     assert ua.names == ("s1", "s2")
     assert len(ua) == 2
     assert numpy.allclose(
-        ua.get_seq_array(seqid="s1"), alpha.to_indices(raw_data["s1"])
+        ua.get_seq_array(seqid="s1"), dna_alpha.to_indices(raw_data["s1"])
     )
     assert ua.get_seq_str(seqid="s1") == raw_data["s1"]
     assert ua.get_seq_str(seqid="s2") == raw_data["s2"]
@@ -130,10 +133,9 @@ def test_load_invalid(tmp_path):
         cogent3_h5seqs.load_seqs_data(path)
 
 
-def test_make_alignedseqsdata(raw_aligned_data):
-    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+def test_make_alignedseqsdata(raw_aligned_data, dna_alpha):
     asd = cogent3_h5seqs.make_aligned(
-        path=None, data=raw_aligned_data, in_memory=True, alphabet=alpha
+        path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
     )
     assert len(asd) == len(raw_aligned_data["s2"])
     assert asd.names == ("s1", "s2")
@@ -157,10 +159,9 @@ def test_driver_aligned(raw_aligned_data):
 
 
 @pytest.fixture
-def small_unaligned(raw_data):
-    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+def small_unaligned(raw_data, dna_alpha):
     return cogent3_h5seqs.make_unaligned(
-        None, data=raw_data, in_memory=True, alphabet=alpha
+        None, data=raw_data, in_memory=True, alphabet=dna_alpha
     )
 
 
@@ -177,10 +178,9 @@ def test_load_h5_unaligned(h5_unaligned_path, raw_data):
 
 
 @pytest.fixture
-def small_aligned(raw_aligned_data):
-    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+def small_aligned(raw_aligned_data, dna_alpha):
     return cogent3_h5seqs.make_aligned(
-        path=None, data=raw_aligned_data, in_memory=True, alphabet=alpha
+        path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
     )
 
 
@@ -199,14 +199,47 @@ def test_load_h5_aligned(h5_aligned_path, raw_aligned_data):
 @pytest.mark.parametrize(
     "cls", [cogent3_h5seqs.UnalignedSeqsData, cogent3_h5seqs.AlignedSeqsData]
 )
-def test_check_init(cls):
+def test_check_init(cls, dna_alpha):
     h5file = cogent3_h5seqs.open_h5_file(path=None, mode="w", in_memory=True)
-    alpha = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
     kwargs = (
         {"data": h5file}
         if cls == cogent3_h5seqs.UnalignedSeqsData
         else {"gapped_seqs": h5file}
     )
     with pytest.raises(ValueError):
-        cls(alphabet=alpha, check=True, **kwargs)
+        cls(alphabet=dna_alpha, check=True, **kwargs)
     h5file.close()
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_getitem_err(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(TypeError):
+        obj[20.0]
+
+
+@pytest.mark.parametrize(
+    "cls", [cogent3_h5seqs.AlignedSeqsData, cogent3_h5seqs.UnalignedSeqsData]
+)
+def test_add_seqs_not_writeable(cls, tmp_path, dna_alpha):
+    path = tmp_path / "test.h5seqs"
+    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="w", in_memory=False)
+    h5file.close()
+    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="r", in_memory=False)
+    kwargs = (
+        dict(data=h5file)
+        if cls == cogent3_h5seqs.UnalignedSeqsData
+        else dict(gapped_seqs=h5file)
+    )
+    obj = cls(alphabet=dna_alpha, check=False, **kwargs)
+    with pytest.raises(PermissionError):
+        obj.add_seqs({"seq1": "ATGC"})
+
+
+def test_make_empty_aligned(dna_alpha):
+    h5file = cogent3_h5seqs.open_h5_file("memory", mode="w", in_memory=True)
+    asd = cogent3_h5seqs.AlignedSeqsData(
+        gapped_seqs=h5file, alphabet=dna_alpha, check=False
+    )
+    assert asd.align_len == 0
+    assert len(asd) == 0
