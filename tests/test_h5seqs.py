@@ -277,6 +277,14 @@ def test_get_seq_length(fxt, request, raw_data):
 
 
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_seq_length_invalid_seqid(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    # seq s2 is the same between the aligned and unaligned examples
+    with pytest.raises(KeyError):
+        obj.get_seq_length(seqid="missing")
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_get_seq_array(fxt, request, raw_data, dna_alpha):
     obj = request.getfixturevalue(fxt)
     # seq s2 is the same between the aligned and unaligned examples
