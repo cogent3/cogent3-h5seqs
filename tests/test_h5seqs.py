@@ -306,3 +306,21 @@ def test_get_seq_array_invalid_seqid(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
         obj.get_seq_array(seqid="missing")
+
+
+@pytest.mark.parametrize(
+    "mk_obj", [cogent3.make_unaligned_seqs, cogent3.make_aligned_seqs]
+)
+def test_from_storage(mk_obj, raw_aligned_data):
+    aligned = mk_obj == cogent3.make_aligned_seqs
+    storage_backend = "h5seqs_aligned" if aligned else "h5seqs_unaligned"
+    coll = mk_obj(
+        raw_aligned_data,
+        moltype="dna",
+        new_type=True,
+        storage_backend=storage_backend,
+        in_memory=True,
+    )
+    got = coll.storage.from_storage(coll, in_memory=True)
+    assert got is not coll
+    assert got == coll.storage

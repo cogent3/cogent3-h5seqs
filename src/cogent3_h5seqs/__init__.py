@@ -183,7 +183,13 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if self.names != other.names:
             return False
 
-        for attr_name in ("alphabet", "offset"):
+        attrs = (
+            "names",
+            "_alphabet",
+            "offset",
+            "reversed_seqs",
+        )
+        for attr_name in attrs:
             self_attr = getattr(self, attr_name)
             other_attr = getattr(other, attr_name)
             if self_attr != other_attr:
@@ -454,7 +460,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         **kwargs,
     ) -> typing_extensions.Self:
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
-        h5file = open_h5_file(path=path, mode="w")
+        in_memory = kwargs.pop("in_memory", False)
+        h5file = open_h5_file(path=path, mode="w", in_memory=in_memory)
         obj = cls(
             data=h5file,
             alphabet=seqcoll.moltype.most_degen_alphabet(),
@@ -532,7 +539,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         attrs = (
             "names",
             "_alphabet",
-            "_align_len",
+            "align_len",
             "offset",
             "reversed_seqs",
         )
@@ -645,7 +652,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         **kwargs,
     ) -> typing_extensions.Self:
         """convert a cogent3 AlignedSeqsDataABC into AlignedSeqsData"""
-        h5file = open_h5_file(path=path, mode="w")
+        in_memory = kwargs.pop("in_memory", False)
+        h5file = open_h5_file(path=path, mode="w", in_memory=in_memory)
         obj = cls(
             gapped_seqs=h5file,
             alphabet=seqcoll.moltype.most_degen_alphabet(),
