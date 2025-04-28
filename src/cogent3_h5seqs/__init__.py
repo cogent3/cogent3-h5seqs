@@ -504,6 +504,17 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         )
         return obj
 
+    @classmethod
+    def from_file(cls, path: str | pathlib.Path, mode: str = "r"):
+        h5file = open_h5_file(path=path, mode=mode, in_memory=False)
+        alphabet = c3_alphabet.make_alphabet(
+            chars=h5file.attrs.get("alphabet"),
+            gap=h5file.attrs.get("gap_char"),
+            missing=h5file.attrs.get("missing_char"),
+            moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
+        )
+        return cls(data=h5file, alphabet=alphabet)
+
     def _write(self, path: str | pathlib.Path) -> None:
         path = pathlib.Path(path).expanduser().absolute()
         curr_path = pathlib.Path(self._file.filename).absolute()
@@ -675,6 +686,17 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             reversed_seqs=seqcoll.storage.reversed_seqs,
         )
         return obj
+
+    @classmethod
+    def from_file(cls, path: str | pathlib.Path, mode: str = "r"):
+        h5file = open_h5_file(path=path, mode=mode, in_memory=False)
+        alphabet = c3_alphabet.make_alphabet(
+            chars=h5file.attrs.get("alphabet"),
+            gap=h5file.attrs.get("gap_char"),
+            missing=h5file.attrs.get("missing_char"),
+            moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
+        )
+        return cls(gapped_seqs=h5file, alphabet=alphabet)
 
     def _make_gaps_and_ungapped(self, seqid: str) -> None:
         if (
@@ -1040,18 +1062,7 @@ def load_seqs_data(
             f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX} or {ALIGNED_SUFFIX}"
         )
 
-    h5file = open_h5_file(path=path, mode=mode, in_memory=False)
-    alphabet = h5file.attrs.get("alphabet")
-    gap_char = h5file.attrs.get("gap_char")
-    missing_char = h5file.attrs.get("missing_char")
-    moltype = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
-    alphabet = c3_alphabet.make_alphabet(
-        chars=alphabet,
-        gap=gap_char,
-        missing=missing_char,
-        moltype=moltype,
-    )
-    return klass(data=h5file, alphabet=alphabet, check=mode == "r")
+    return klass.from_file(path=path, mode=mode)
 
 
 def write_seqs_data(
