@@ -2,7 +2,6 @@ import functools
 import uuid
 import pathlib
 import hdf5plugin  # noqa
-import json
 import numpy
 import typing
 import h5py
@@ -77,46 +76,6 @@ def _assign_attr_if_missing(
     if attr not in h5file.attrs:
         h5file.attrs[attr] = value
     return h5file.attrs[attr] == value
-
-
-@functools.singledispatch
-def _updated_attr(value: dict | set, h5file: h5py.File, attr: str) -> dict | set:
-    raise NotImplementedError(f"updated_attr not implemented for {type(value)}")
-
-
-@_updated_attr.register
-def _(value: dict, h5file: h5py.File, attr: str) -> dict:
-    stored = h5file.attrs.get(attr) or value
-    if stored is value:
-        return stored
-    else:
-        stored = json.loads(stored)
-
-    result = stored | value
-    h5file.attrs[attr] = json.dumps(result)
-    return result
-
-
-@_updated_attr.register
-def _(value: frozenset, h5file: h5py.File, attr: str) -> frozenset:
-    stored = h5file.attrs.get(attr) or value
-    if stored is value:
-        return stored
-    else:
-        stored = json.loads(stored)
-
-    result = stored | value
-    h5file.attrs[attr] = json.dumps(list(result))
-    return result
-
-
-@_updated_attr.register
-def _(value: set, h5file: h5py.File, attr: str) -> frozenset:
-    return _updated_attr(
-        frozenset(value),
-        h5file,
-        attr,
-    )
 
 
 def _valid_h5seqs(h5file: h5py.File, main_seq_grp: str) -> bool:
@@ -196,8 +155,6 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if check:
             self._check_file(self._file)
 
-        self._populate_attrs()
-
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._ungapped_grp):
@@ -225,7 +182,13 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if self.names != other.names:
             return False
 
-        for attr_name in ("alphabet", "offset"):
+        attrs = (
+            "names",
+            "_alphabet",
+            "offset",
+            "reversed_seqs",
+        )
+        for attr_name in attrs:
             self_attr = getattr(self, attr_name)
             other_attr = getattr(other, attr_name)
             if self_attr != other_attr:
@@ -272,10 +235,12 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def offset(self) -> dict[str, int]:
+        all_offsets = {n: 0 for n in self.names}
         if "offset" not in self._file:
-            return {}
+            return all_offsets
         data = self._file["offset"][:]
-        return {k.decode("utf8"): v for k, v in data}
+
+        return all_offsets | {k.decode("utf8"): int(v) for k, v in data}
 
     @property
     def reversed_seqs(self) -> frozenset[str]:
@@ -374,17 +339,25 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             sequences to add as {name: value, ...}
         force_unique_keys
             raises ValueError if any names already exist in the collection.
+            If False, skips duplicate seqids.
         offset
             offsets relative to parent sequence to add as {name: int, ...}
         """
         if not self.writable:
             raise PermissionError("Cannot add sequences to a read-only file")
 
+        self._populate_attrs()
+
         if force_unique_keys and any(name in self.names for name in seqs):
             msg = "One or more sequence names already exist in collection"
             raise ValueError(msg)
 
+        names = set() if force_unique_keys else set(self.names)
         for seqid, seq in seqs.items():
+            if seqid in names:
+                # force_unique_keys must be flase, so we ignore
+                continue
+
             self._file.create_dataset(
                 name=f"{self._ungapped_grp}/{seqid}",
                 data=self.alphabet.to_indices(seq),
@@ -456,7 +429,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             offset=self.offset.get(seqid, 0),
         )
 
-    def get_seq_length(self, *, seqid: str) -> int:
+    def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
         if seqid not in self.names:
             raise KeyError(f"Sequence {seqid} not found")
@@ -488,7 +461,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         **kwargs,
     ) -> typing_extensions.Self:
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
-        h5file = open_h5_file(path=path, mode="w")
+        in_memory = kwargs.pop("in_memory", False)
+        h5file = open_h5_file(path=path, mode="w", in_memory=in_memory)
         obj = cls(
             data=h5file,
             alphabet=seqcoll.moltype.most_degen_alphabet(),
@@ -566,7 +540,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         attrs = (
             "names",
             "_alphabet",
-            "_align_len",
+            "align_len",
             "offset",
             "reversed_seqs",
         )
@@ -593,11 +567,19 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @property
     def align_len(self) -> int:
         """length of the alignment"""
-        name = next(iter(self._file[self._gapped_grp]), None)
+        name = next(iter(self._file.get(self._gapped_grp, [])), None)
         return len(self._file[f"{self._gapped_grp}/{name}"]) if name else 0
 
     def __len__(self) -> int:
         return self.align_len
+
+    def get_seq_length(self, seqid: str) -> int:
+        """Returns the length of the sequence"""
+        if seqid not in self.names:
+            raise KeyError(f"Sequence {seqid} not found")
+        if seqid not in self._ungapped_grp:
+            self._make_gaps_and_ungapped(seqid)
+        return len(self._file[f"{self._ungapped_grp}/{seqid}"])
 
     @classmethod
     def from_seqs(
@@ -651,10 +633,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     ) -> typing_extensions.Self:
         data = {}
         for seqid, seq in seqs.items():
-            gaps = gaps[seqid]
+            gp = gaps[seqid]
             gapped = c3_alignment.compose_gapped_seq(
-                ungapped=seq,
-                gaps=gaps,
+                ungapped_seq=seq,
+                gaps=gp,
                 gap_index=alphabet.gap_index,
             )
             data[seqid] = gapped
@@ -671,7 +653,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         **kwargs,
     ) -> typing_extensions.Self:
         """convert a cogent3 AlignedSeqsDataABC into AlignedSeqsData"""
-        h5file = open_h5_file(path=path, mode="w")
+        in_memory = kwargs.pop("in_memory", False)
+        h5file = open_h5_file(path=path, mode="w", in_memory=in_memory)
         obj = cls(
             gapped_seqs=h5file,
             alphabet=seqcoll.moltype.most_degen_alphabet(),
@@ -698,9 +681,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         return cls(gapped_seqs=h5file, alphabet=alphabet)
 
     def _make_gaps_and_ungapped(self, seqid: str) -> None:
-        if (
-            seqid in self._file[self._gaps_grp]
-            and seqid in self._file[self._ungapped_grp]
+        if seqid in self._file.get(self._gaps_grp, {}) and seqid in self._file.get(
+            self._ungapped_grp, {}
         ):
             # job already done
             return
@@ -723,12 +705,12 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
 
     def _get_gaps(self, seqid: str) -> numpy.ndarray:
-        if seqid not in self._file[self._gaps_grp]:
+        if seqid not in self._file.get(self._gaps_grp, {}):
             self._make_gaps_and_ungapped(seqid)
         return self._file[f"{self._gaps_grp}/{seqid}"][:]
 
     def _get_ungapped(self, seqid: str) -> numpy.ndarray:
-        if seqid not in self._file[self._ungapped_grp]:
+        if seqid not in self._file.get(self._ungapped_grp, {}):
             self._make_gaps_and_ungapped(seqid)
         return self._file[f"{self._ungapped_grp}/{seqid}"][:]
 
@@ -790,8 +772,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             msg = f"{start=}, {stop=}, {step=} not >= 1"
             raise ValueError(msg)
 
-        segment = slice(start, stop, step)
-        array_seqs = numpy.empty((len(names), len(segment)), dtype=self.alphabet.dtype)
+        array_seqs = numpy.empty(
+            (len(names), len(range(start, stop, step))), dtype=self.alphabet.dtype
+        )
         for index, name in enumerate(names):
             if name not in self.names:
                 raise KeyError(f"Sequence {name} not found")
@@ -855,17 +838,29 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             dict of sequences to add {name: seq, ...}
         force_unique_keys
             if True, raises ValueError if any sequence names already exist in the collection
+            If False, skips duplicate seqids.
         offset
             dict of offsets relative to parent for the new sequences.
         """
         if not self.writable:
             raise PermissionError("Cannot add sequences to a read-only file")
 
+        self._populate_attrs()
+
         if force_unique_keys and any(name in self.names for name in seqs):
             msg = "One or more sequence names already exist in collection"
             raise ValueError(msg)
 
+        align_len = self.align_len
+        names = set() if force_unique_keys else set(self.names)
         for seqid, seq in seqs.items():
+            if align_len and len(seq) != align_len:
+                raise ValueError(
+                    f"{seqid!r} length {len(seq)} does not equal {align_len=}"
+                )
+            if seqid in names:
+                continue
+
             self._file.create_dataset(
                 name=f"{self._gapped_grp}/{seqid}",
                 data=self.alphabet.to_indices(seq),
@@ -1071,7 +1066,7 @@ def write_seqs_data(
     **kwargs,
 ) -> pathlib.Path:
     if isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)):
-        seqcoll.storage.write(path=path)
+        return seqcoll.storage.write(path=path)
 
     supported_suffixes = {ALIGNED_SUFFIX, UNALIGNED_SUFFIX}
     suffix = path.suffix[1:]
@@ -1088,8 +1083,8 @@ def write_seqs_data(
         dict(data=data, alphabet=alphabet, offset=offset, reversed_seqs=reversed_seqs)
         | kwargs
     )
-    store = cls.from_seqs()
-    store.write(path=path, **kwargs)
+    store = cls.from_seqs(**kwargs)
+    store.write(path=path)
     return path
 
 
@@ -1122,7 +1117,6 @@ class H5SeqsWriter(SequenceWriterBase):
     def supported_suffixes(self) -> set[str]:
         return {UNALIGNED_SUFFIX, ALIGNED_SUFFIX}
 
-    @property
     def write(
         self,
         *,
@@ -1130,6 +1124,7 @@ class H5SeqsWriter(SequenceWriterBase):
         seqcoll: SeqsTypes,
         **kwargs,
     ) -> pathlib.Path:
+        kwargs.pop("order", None)
         return write_seqs_data(
             path=path,
             seqcoll=seqcoll,

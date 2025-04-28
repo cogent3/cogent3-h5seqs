@@ -1,0 +1,412 @@
+import cogent3_h5seqs
+import cogent3
+import numpy
+import pytest
+
+
+@pytest.fixture
+def dna_alpha():
+    return cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+
+
+@pytest.fixture
+def raw_data():
+    return {"s1": "ACGG", "s2": "TGGGCAGTA"}
+
+
+@pytest.fixture
+def raw_aligned_data():
+    return {"s1": "TGG--ACGG", "s2": "TGGGCAGTA"}
+
+
+@pytest.fixture
+def small(raw_data, dna_alpha):
+    return cogent3_h5seqs.make_unaligned(
+        "memory", data=raw_data, in_memory=True, alphabet=dna_alpha
+    )
+
+
+@pytest.mark.parametrize("offset", [None, {"s1": 2}])
+def test_make_unaligned(raw_data, offset, dna_alpha):
+    offset_expect = {k: 0 for k in raw_data} | (offset or {})
+    ua = cogent3_h5seqs.make_unaligned(
+        "memory", data=raw_data, in_memory=True, alphabet=dna_alpha, offset=offset
+    )
+    assert ua.names == ("s1", "s2")
+    assert len(ua) == 2
+    assert numpy.allclose(
+        ua.get_seq_array(seqid="s1"), dna_alpha.to_indices(raw_data["s1"])
+    )
+    assert ua.get_seq_str(seqid="s1") == raw_data["s1"]
+    assert ua.get_seq_str(seqid="s2") == raw_data["s2"]
+    assert ua.get_seq_bytes(seqid="s2") == raw_data["s2"].encode("utf-8")
+    assert ua.get_seq_length(seqid="s1") == len(raw_data["s1"])
+    assert ua.offset == offset_expect
+    assert ua.reversed_seqs == frozenset()
+
+
+def test_unaligned_get_view(small, raw_data):
+    view = small.get_view(seqid="s1")
+    assert view.parent is small
+    assert view.seqid == "s1"
+    assert str(view) == raw_data["s1"]
+    nv = view[2:4]
+    assert str(nv) == raw_data["s1"][2:4]
+
+
+@pytest.mark.parametrize("seqid", ["s1", "s2"])
+def test_unaligned_index(small, raw_data, seqid):
+    sv = small[seqid]
+    assert sv.seqid == seqid
+    assert str(sv) == raw_data[seqid]
+    index = small.names.index(seqid)
+    sv = small[index]
+    assert sv.seqid == seqid
+
+
+def test_unaligned_copy(small):
+    copy = small.copy()
+    copy.add_seqs({"s3": "ACGT"})
+    assert copy.names != small.names
+
+
+def test_unaligned_eq(small):
+    copy = small.copy()
+    assert copy == small
+
+
+def test_unaligned_neq(small):
+    copy = small.copy()
+    copy.add_seqs({"s3": "ACGT"})
+    assert copy != small
+
+
+def test_unaligned_to_rna(small):
+    rna = cogent3.get_moltype("rna", new_type=True).most_degen_alphabet()
+    mod = small.to_alphabet(rna)
+    assert numpy.allclose(numpy.array(mod["s1"]), numpy.array(small["s1"]))
+    assert str(mod["s2"]) == str(small["s2"]).replace("T", "U")
+
+
+def test_unaligned_to_alphabet_text(small):
+    text = cogent3.get_moltype("text", new_type=True).most_degen_alphabet()
+    mod = small.to_alphabet(text)
+    # arrays now different
+    assert not numpy.allclose(numpy.array(mod["s1"]), numpy.array(small["s1"]))
+    # but str is the same
+    assert str(mod["s2"]) == str(small["s2"])
+    assert mod.alphabet == text
+
+
+def test_unaligned_offset(small):
+    copy = small.copy(offset={"s1": 2})
+    assert copy.offset == {"s1": 2, "s2": 0}
+    s1 = copy.get_view(seqid="s1")
+    assert s1.offset == 2
+    s2 = copy.get_view(seqid="s2")
+    assert s2.offset == 0
+
+
+def test_unaligned_reversed_seqs(small):
+    copy = small.copy(reversed_seqs={"s2"})
+    assert copy.reversed_seqs == {"s2"}
+    s2 = copy.get_view(seqid="s2")
+    assert s2.is_reversed
+
+
+def test_write(tmp_path, small):
+    path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
+    small.write(path)
+    assert path.is_file()
+    loaded = cogent3_h5seqs.load_seqs_data(path)
+    assert loaded == small
+
+
+def test_write_twice(tmp_path, small):
+    path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
+    small.write(path)
+    loaded = cogent3_h5seqs.load_seqs_data(path, mode="r+")
+    assert loaded == small
+    # write has no effect
+    loaded.write(path)
+
+
+def test_write_invalid(tmp_path, small):
+    path = tmp_path / "unaligned.h5seqs"
+    with pytest.raises(ValueError):
+        small.write(path)
+
+
+def test_load_invalid(tmp_path):
+    path = tmp_path / "unaligned.h5seqs"
+    with pytest.raises(ValueError):
+        cogent3_h5seqs.load_seqs_data(path)
+
+
+def test_make_alignedseqsdata(raw_aligned_data, dna_alpha):
+    asd = cogent3_h5seqs.make_aligned(
+        path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
+    )
+    assert len(asd) == len(raw_aligned_data["s2"])
+    assert asd.names == ("s1", "s2")
+
+
+def test_driver_unaligned(raw_data):
+    seqs = cogent3.make_unaligned_seqs(
+        data=raw_data, moltype="dna", storage_backend="h5seqs_unaligned", new_type=True
+    )
+    assert isinstance(seqs.storage, cogent3_h5seqs.UnalignedSeqsData)
+
+
+def test_driver_aligned(raw_aligned_data):
+    seqs = cogent3.make_aligned_seqs(
+        data=raw_aligned_data,
+        moltype="dna",
+        storage_backend="h5seqs_aligned",
+        new_type=True,
+    )
+    assert isinstance(seqs.storage, cogent3_h5seqs.AlignedSeqsData)
+
+
+@pytest.fixture
+def small_unaligned(raw_data, dna_alpha):
+    return cogent3_h5seqs.make_unaligned(
+        None, data=raw_data, in_memory=True, alphabet=dna_alpha
+    )
+
+
+@pytest.fixture
+def h5_unaligned_path(small_unaligned, tmp_path):
+    outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
+    small_unaligned.write(outpath)
+    return outpath
+
+
+def test_load_h5_unaligned(h5_unaligned_path, raw_data):
+    seqs = cogent3.load_unaligned_seqs(h5_unaligned_path, moltype="dna", new_type=True)
+    assert seqs.to_dict() == raw_data
+
+
+@pytest.fixture
+def small_aligned(raw_aligned_data, dna_alpha):
+    return cogent3_h5seqs.make_aligned(
+        path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
+    )
+
+
+@pytest.fixture
+def h5_aligned_path(small_aligned, tmp_path):
+    outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+    small_aligned.write(outpath)
+    return outpath
+
+
+def test_load_h5_aligned(h5_aligned_path, raw_aligned_data):
+    aln = cogent3.load_aligned_seqs(h5_aligned_path, moltype="dna", new_type=True)
+    assert aln.to_dict() == raw_aligned_data
+
+
+@pytest.mark.parametrize(
+    "cls", [cogent3_h5seqs.UnalignedSeqsData, cogent3_h5seqs.AlignedSeqsData]
+)
+def test_check_init(cls, dna_alpha):
+    h5file = cogent3_h5seqs.open_h5_file(path=None, mode="w", in_memory=True)
+    kwargs = (
+        {"data": h5file}
+        if cls == cogent3_h5seqs.UnalignedSeqsData
+        else {"gapped_seqs": h5file}
+    )
+    with pytest.raises(ValueError):
+        cls(alphabet=dna_alpha, check=True, **kwargs)
+    h5file.close()
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_getitem_err(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(TypeError):
+        obj[20.0]
+
+
+@pytest.mark.parametrize(
+    "cls", [cogent3_h5seqs.AlignedSeqsData, cogent3_h5seqs.UnalignedSeqsData]
+)
+def test_add_seqs_not_writeable(cls, tmp_path, dna_alpha):
+    path = tmp_path / "test.h5seqs"
+    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="w", in_memory=False)
+    h5file.close()
+    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="r", in_memory=False)
+    kwargs = (
+        dict(data=h5file)
+        if cls == cogent3_h5seqs.UnalignedSeqsData
+        else dict(gapped_seqs=h5file)
+    )
+    obj = cls(alphabet=dna_alpha, check=False, **kwargs)
+    with pytest.raises(PermissionError):
+        obj.add_seqs({"seq1": "ATGC"})
+
+
+def test_make_empty_aligned(dna_alpha):
+    h5file = cogent3_h5seqs.open_h5_file("memory", mode="w", in_memory=True)
+    asd = cogent3_h5seqs.AlignedSeqsData(
+        gapped_seqs=h5file, alphabet=dna_alpha, check=False
+    )
+    assert asd.align_len == 0
+    assert len(asd) == 0
+
+
+def test_aligned_add_seqs_duplicates_disallowed(small_aligned, raw_aligned_data):
+    with pytest.raises(ValueError):
+        small_aligned.add_seqs(raw_aligned_data, force_unique_keys=True)
+
+
+def test_aligned_add_seqs_duplicates_allowed(small_aligned, raw_aligned_data):
+    num_seqs = len(small_aligned.names)
+    small_aligned.add_seqs(raw_aligned_data, force_unique_keys=False)
+    assert len(small_aligned.names) == num_seqs
+
+
+def test_unaligned_add_seqs_duplicates_disallowed(small_unaligned, raw_data):
+    with pytest.raises(ValueError):
+        small_unaligned.add_seqs(raw_data, force_unique_keys=True)
+
+
+def test_unaligned_add_seqs_duplicates_allowed(small_unaligned, raw_data):
+    num_seqs = len(small_unaligned.names)
+    small_unaligned.add_seqs(raw_data, force_unique_keys=False)
+    assert len(small_unaligned.names) == num_seqs
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_seq_length(fxt, request, raw_data):
+    obj = request.getfixturevalue(fxt)
+    # seq s2 is the same between the aligned and unaligned examples
+    l = obj.get_seq_length(seqid="s2")
+    expect = len(raw_data["s2"])
+    assert l == expect
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_seq_length_invalid_seqid(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    # seq s2 is the same between the aligned and unaligned examples
+    with pytest.raises(KeyError):
+        obj.get_seq_length(seqid="missing")
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_seq_array(fxt, request, raw_data, dna_alpha):
+    obj = request.getfixturevalue(fxt)
+    # seq s2 is the same between the aligned and unaligned examples
+    s = obj.get_seq_array(seqid="s2")
+    expect = dna_alpha.to_indices(raw_data["s2"])
+    assert (s == expect).all()
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize("arg", ["start", "stop", "step"])
+def test_get_seq_array_invalid_pos(fxt, request, arg):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(ValueError):
+        obj.get_seq_array(seqid="s2", **{arg: -1})
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_seq_array_invalid_seqid(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_seq_array(seqid="missing")
+
+
+@pytest.mark.parametrize(
+    "mk_obj", [cogent3.make_unaligned_seqs, cogent3.make_aligned_seqs]
+)
+def test_from_storage(mk_obj, raw_aligned_data):
+    aligned = mk_obj == cogent3.make_aligned_seqs
+    storage_backend = "h5seqs_aligned" if aligned else "h5seqs_unaligned"
+    coll = mk_obj(
+        raw_aligned_data,
+        moltype="dna",
+        new_type=True,
+        storage_backend=storage_backend,
+        in_memory=True,
+    )
+    got = coll.storage.from_storage(coll, in_memory=True)
+    assert got is not coll
+    assert got == coll.storage
+
+
+def test_aligned_from_names_and_array(small_aligned):
+    names = small_aligned.names
+    data = numpy.array(
+        [small_aligned.get_gapped_seq_array(seqid=name) for name in names],
+        dtype=small_aligned.alphabet.dtype,
+    )
+    got = small_aligned.from_names_and_array(
+        names=names, data=data, alphabet=small_aligned.alphabet
+    )
+    assert got == small_aligned
+    assert got is not small_aligned
+
+
+def test_aligned_from_names_and_array_invalid(small_aligned):
+    names = small_aligned.names
+    data = numpy.array(
+        [small_aligned.get_gapped_seq_array(seqid=name) for name in names],
+        dtype=small_aligned.alphabet.dtype,
+    )
+    with pytest.raises(ValueError):
+        small_aligned.from_names_and_array(
+            names=names[:-1], data=data, alphabet=small_aligned.alphabet
+        )
+
+
+def test_aligned_from_names_and_array2(raw_aligned_data, dna_alpha):
+    aln = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend="h5seqs_aligned"
+    )
+    seqs = list(aln.seqs)
+    gaps = {s.name: s.map.array for s in seqs}
+    s = {s.name: numpy.array(s.seq) for s in seqs}
+    got = cogent3_h5seqs.AlignedSeqsData.from_seqs_and_gaps(
+        seqs=s, gaps=gaps, alphabet=dna_alpha
+    )
+    assert got == aln.storage
+
+
+def test_aligned_get_ungapped(small_aligned, raw_aligned_data):
+    aln = cogent3.make_aligned_seqs(small_aligned, new_type=True, moltype="dna")
+    ungapped = aln.degap(storage_backend="h5seqs_unaligned")
+    expect = {n: s.replace("-", "") for n, s in raw_aligned_data.items()}
+    assert ungapped.to_dict() == expect
+    assert isinstance(ungapped.storage, cogent3_h5seqs.UnalignedSeqsData)
+
+
+@pytest.mark.parametrize("storage_backend", [None, "h5seqs_aligned"])
+def test_write_aligned(raw_aligned_data, storage_backend, tmp_path):
+    aln = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend=storage_backend
+    )
+    outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+    aln.write(outpath)
+    assert outpath.exists()
+    assert outpath.is_file()
+
+
+def test_get_positions(raw_aligned_data):
+    c3 = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend=None
+    )
+    h5 = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend="h5seqs_aligned"
+    )
+    assert (c3.array_seqs == h5.array_seqs).all()
+
+
+@pytest.mark.parametrize("arg", ["start", "stop", "step"])
+def test_get_positions_invalid_coord(raw_aligned_data, arg):
+    h5 = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend="h5seqs_aligned"
+    )
+    with pytest.raises(ValueError):
+        h5.storage.get_positions(names=["s1", "s2"], **{arg: -1})
