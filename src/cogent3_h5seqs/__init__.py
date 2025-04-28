@@ -472,10 +472,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     ) -> typing_extensions.Self:
         # make in memory
         path = kwargs.pop("path", "memory")
+        kwargs = {"mode": "w"} | kwargs
         return make_unaligned(
             path,
-            mode="w",
-            in_memory=True,
             data=data,
             alphabet=alphabet,
             **kwargs,
@@ -619,9 +618,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             alphabet object for the sequences
         """
         # need to support providing a path
-        path = kwargs.pop("path", None)
-        mode = kwargs.pop("mode", "w")
-        return make_aligned(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
+        path = kwargs.pop("path", "memory")
+        kwargs = {"mode": "w"} | kwargs
+        return make_aligned(path, data=data, alphabet=alphabet, **kwargs)
 
     @classmethod
     def from_names_and_array(
