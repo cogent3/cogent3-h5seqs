@@ -2,7 +2,6 @@ import functools
 import uuid
 import pathlib
 import hdf5plugin  # noqa
-import json
 import numpy
 import typing
 import h5py
@@ -488,6 +487,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return cls(data=h5file, alphabet=alphabet)
 
     def _write(self, path: str | pathlib.Path) -> None:
+        if not self.writable:
+            raise PermissionError("not writeable")
+
         path = pathlib.Path(path).expanduser().absolute()
         curr_path = pathlib.Path(self._file.filename).absolute()
         if path == curr_path:

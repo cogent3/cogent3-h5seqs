@@ -116,9 +116,21 @@ def test_unaligned_reversed_seqs(small):
 def test_write(tmp_path, small):
     path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
     small.write(path)
-    # assert path.is_file()
+    assert path.is_file()
     loaded = cogent3_h5seqs.load_seqs_data(path)
     assert loaded == small
+    # caoonot write now
+    with pytest.raises(PermissionError):
+        loaded.write(path)
+
+
+def test_write_twice(tmp_path, small):
+    path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
+    small.write(path)
+    loaded = cogent3_h5seqs.load_seqs_data(path, mode="r+")
+    assert loaded == small
+    # write has no effect
+    loaded.write(path)
 
 
 def test_write_invalid(tmp_path, small):
