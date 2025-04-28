@@ -120,9 +120,6 @@ def test_write(tmp_path, small):
     assert path.is_file()
     loaded = cogent3_h5seqs.load_seqs_data(path)
     assert loaded == small
-    # caoonot write now
-    with pytest.raises(PermissionError):
-        loaded.write(path)
 
 
 def test_write_twice(tmp_path, small):
@@ -375,3 +372,22 @@ def test_aligned_from_names_and_array2(raw_aligned_data, dna_alpha):
         seqs=s, gaps=gaps, alphabet=dna_alpha
     )
     assert got == aln.storage
+
+
+def test_aligned_get_ungapped(small_aligned, raw_aligned_data):
+    aln = cogent3.make_aligned_seqs(small_aligned, new_type=True, moltype="dna")
+    ungapped = aln.degap(storage_backend="h5seqs_unaligned")
+    expect = {n: s.replace("-", "") for n, s in raw_aligned_data.items()}
+    assert ungapped.to_dict() == expect
+    assert isinstance(ungapped.storage, cogent3_h5seqs.UnalignedSeqsData)
+
+
+@pytest.mark.parametrize("storage_backend", [None, "h5seqs_aligned"])
+def test_write_aligned(raw_aligned_data, storage_backend, tmp_path):
+    aln = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend=storage_backend
+    )
+    outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+    aln.write(outpath)
+    assert outpath.exists()
+    assert outpath.is_file()

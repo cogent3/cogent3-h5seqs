@@ -489,9 +489,6 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return cls(data=h5file, alphabet=alphabet)
 
     def _write(self, path: str | pathlib.Path) -> None:
-        if not self.writable:
-            raise PermissionError("not writeable")
-
         path = pathlib.Path(path).expanduser().absolute()
         curr_path = pathlib.Path(self._file.filename).absolute()
         if path == curr_path:
@@ -1068,7 +1065,7 @@ def write_seqs_data(
     **kwargs,
 ) -> pathlib.Path:
     if isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)):
-        seqcoll.storage.write(path=path)
+        return seqcoll.storage.write(path=path)
 
     supported_suffixes = {ALIGNED_SUFFIX, UNALIGNED_SUFFIX}
     suffix = path.suffix[1:]
@@ -1085,8 +1082,8 @@ def write_seqs_data(
         dict(data=data, alphabet=alphabet, offset=offset, reversed_seqs=reversed_seqs)
         | kwargs
     )
-    store = cls.from_seqs()
-    store.write(path=path, **kwargs)
+    store = cls.from_seqs(**kwargs)
+    store.write(path=path)
     return path
 
 
@@ -1119,7 +1116,6 @@ class H5SeqsWriter(SequenceWriterBase):
     def supported_suffixes(self) -> set[str]:
         return {UNALIGNED_SUFFIX, ALIGNED_SUFFIX}
 
-    @property
     def write(
         self,
         *,
@@ -1127,6 +1123,7 @@ class H5SeqsWriter(SequenceWriterBase):
         seqcoll: SeqsTypes,
         **kwargs,
     ) -> pathlib.Path:
+        kwargs.pop("order", None)
         return write_seqs_data(
             path=path,
             seqcoll=seqcoll,
