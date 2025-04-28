@@ -1093,7 +1093,11 @@ class H5SeqsParser(SequenceParserBase):
         return {UNALIGNED_SUFFIX, ALIGNED_SUFFIX}
 
     @property
-    def parser(
+    def result_is_storage(self):
+        return True
+
+    @property
+    def loader(
         self,
     ) -> typing.Callable[[pathlib.Path], UnalignedSeqsData | AlignedSeqsData]:
         return load_seqs_data
