@@ -827,7 +827,13 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             msg = "One or more sequence names already exist in collection"
             raise ValueError(msg)
 
+        align_len = self.align_len
         for seqid, seq in seqs.items():
+            if align_len and len(seq) != align_len:
+                raise ValueError(
+                    f"{seqid!r} length {len(seq)} does not equal {align_len=}"
+                )
+
             self._file.create_dataset(
                 name=f"{self._gapped_grp}/{seqid}",
                 data=self.alphabet.to_indices(seq),
