@@ -28,6 +28,7 @@ def small(raw_data, dna_alpha):
 
 @pytest.mark.parametrize("offset", [None, {"s1": 2}])
 def test_make_unaligned(raw_data, offset, dna_alpha):
+    offset_expect = {k: 0 for k in raw_data} | (offset or {})
     ua = cogent3_h5seqs.make_unaligned(
         "memory", data=raw_data, in_memory=True, alphabet=dna_alpha, offset=offset
     )
@@ -40,7 +41,7 @@ def test_make_unaligned(raw_data, offset, dna_alpha):
     assert ua.get_seq_str(seqid="s2") == raw_data["s2"]
     assert ua.get_seq_bytes(seqid="s2") == raw_data["s2"].encode("utf-8")
     assert ua.get_seq_length(seqid="s1") == len(raw_data["s1"])
-    assert ua.offset == (offset or {})
+    assert ua.offset == offset_expect
     assert ua.reversed_seqs == frozenset()
 
 
@@ -99,7 +100,7 @@ def test_unaligned_to_alphabet_text(small):
 
 def test_unaligned_offset(small):
     copy = small.copy(offset={"s1": 2})
-    assert copy.offset == {"s1": 2}
+    assert copy.offset == {"s1": 2, "s2": 0}
     s1 = copy.get_view(seqid="s1")
     assert s1.offset == 2
     s2 = copy.get_view(seqid="s2")
@@ -336,3 +337,41 @@ def test_from_storage(mk_obj, raw_aligned_data):
     got = coll.storage.from_storage(coll, in_memory=True)
     assert got is not coll
     assert got == coll.storage
+
+
+def test_aligned_from_names_and_array(small_aligned):
+    names = small_aligned.names
+    data = numpy.array(
+        [small_aligned.get_gapped_seq_array(seqid=name) for name in names],
+        dtype=small_aligned.alphabet.dtype,
+    )
+    got = small_aligned.from_names_and_array(
+        names=names, data=data, alphabet=small_aligned.alphabet
+    )
+    assert got == small_aligned
+    assert got is not small_aligned
+
+
+def test_aligned_from_names_and_array_invalid(small_aligned):
+    names = small_aligned.names
+    data = numpy.array(
+        [small_aligned.get_gapped_seq_array(seqid=name) for name in names],
+        dtype=small_aligned.alphabet.dtype,
+    )
+    with pytest.raises(ValueError):
+        small_aligned.from_names_and_array(
+            names=names[:-1], data=data, alphabet=small_aligned.alphabet
+        )
+
+
+def test_aligned_from_names_and_array2(raw_aligned_data, dna_alpha):
+    aln = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", new_type=True, storage_backend="h5seqs_aligned"
+    )
+    seqs = list(aln.seqs)
+    gaps = {s.name: s.map.array for s in seqs}
+    s = {s.name: numpy.array(s.seq) for s in seqs}
+    got = cogent3_h5seqs.AlignedSeqsData.from_seqs_and_gaps(
+        seqs=s, gaps=gaps, alphabet=dna_alpha
+    )
+    assert got == aln.storage

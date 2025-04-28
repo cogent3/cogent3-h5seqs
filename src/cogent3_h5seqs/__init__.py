@@ -636,10 +636,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     ) -> typing_extensions.Self:
         data = {}
         for seqid, seq in seqs.items():
-            gaps = gaps[seqid]
+            gp = gaps[seqid]
             gapped = c3_alignment.compose_gapped_seq(
-                ungapped=seq,
-                gaps=gaps,
+                ungapped_seq=seq,
+                gaps=gp,
                 gap_index=alphabet.gap_index,
             )
             data[seqid] = gapped
@@ -708,12 +708,12 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
 
     def _get_gaps(self, seqid: str) -> numpy.ndarray:
-        if seqid not in self._file[self._gaps_grp]:
+        if seqid not in self._file.get(self._gaps_grp, {}):
             self._make_gaps_and_ungapped(seqid)
         return self._file[f"{self._gaps_grp}/{seqid}"][:]
 
     def _get_ungapped(self, seqid: str) -> numpy.ndarray:
-        if seqid not in self._file[self._ungapped_grp]:
+        if seqid not in self._file.get(self._ungapped_grp, {}):
             self._make_gaps_and_ungapped(seqid)
         return self._file[f"{self._ungapped_grp}/{seqid}"][:]
 
