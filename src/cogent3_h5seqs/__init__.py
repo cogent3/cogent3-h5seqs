@@ -79,46 +79,6 @@ def _assign_attr_if_missing(
     return h5file.attrs[attr] == value
 
 
-@functools.singledispatch
-def _updated_attr(value: dict | set, h5file: h5py.File, attr: str) -> dict | set:
-    raise NotImplementedError(f"updated_attr not implemented for {type(value)}")
-
-
-@_updated_attr.register
-def _(value: dict, h5file: h5py.File, attr: str) -> dict:
-    stored = h5file.attrs.get(attr) or value
-    if stored is value:
-        return stored
-    else:
-        stored = json.loads(stored)
-
-    result = stored | value
-    h5file.attrs[attr] = json.dumps(result)
-    return result
-
-
-@_updated_attr.register
-def _(value: frozenset, h5file: h5py.File, attr: str) -> frozenset:
-    stored = h5file.attrs.get(attr) or value
-    if stored is value:
-        return stored
-    else:
-        stored = json.loads(stored)
-
-    result = stored | value
-    h5file.attrs[attr] = json.dumps(list(result))
-    return result
-
-
-@_updated_attr.register
-def _(value: set, h5file: h5py.File, attr: str) -> frozenset:
-    return _updated_attr(
-        frozenset(value),
-        h5file,
-        attr,
-    )
-
-
 def _valid_h5seqs(h5file: h5py.File, main_seq_grp: str) -> bool:
     # essential attributes, groups
     return all(
