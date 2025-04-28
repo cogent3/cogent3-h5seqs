@@ -243,6 +243,30 @@ def test_make_empty_aligned(dna_alpha):
     )
     assert asd.align_len == 0
     assert len(asd) == 0
+
+
+def test_aligned_add_seqs_duplicates_disallowed(small_aligned, raw_aligned_data):
+    with pytest.raises(ValueError):
+        small_aligned.add_seqs(raw_aligned_data, force_unique_keys=True)
+
+
+def test_aligned_add_seqs_duplicates_allowed(small_aligned, raw_aligned_data):
+    num_seqs = len(small_aligned.names)
+    small_aligned.add_seqs(raw_aligned_data, force_unique_keys=False)
+    assert len(small_aligned.names) == num_seqs
+
+
+def test_unaligned_add_seqs_duplicates_disallowed(small_unaligned, raw_data):
+    with pytest.raises(ValueError):
+        small_unaligned.add_seqs(raw_data, force_unique_keys=True)
+
+
+def test_unaligned_add_seqs_duplicates_allowed(small_unaligned, raw_data):
+    num_seqs = len(small_unaligned.names)
+    small_unaligned.add_seqs(raw_data, force_unique_keys=False)
+    assert len(small_unaligned.names) == num_seqs
+
+
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_get_seq_length(fxt, request, raw_data):
     obj = request.getfixturevalue(fxt)
