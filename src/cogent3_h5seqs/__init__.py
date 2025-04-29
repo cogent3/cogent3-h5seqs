@@ -172,6 +172,12 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         """whether the file is writable"""
         return self._file.mode in _writeable_modes
 
+    def __del__(self):
+        path = pathlib.Path(self._file.filename)
+        if path.exists() and not path.suffix:
+            # temporary file
+            path.unlink(missing_ok=True)
+
     def __eq__(
         self,
         other: typing_extensions.Self,

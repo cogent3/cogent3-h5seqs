@@ -410,3 +410,31 @@ def test_get_positions_invalid_coord(raw_aligned_data, arg):
     )
     with pytest.raises(ValueError):
         h5.storage.get_positions(names=["s1", "s2"], **{arg: -1})
+
+
+def test_set_as_default_drivers_unaligned(raw_aligned_data):
+    cogent3.set_storage_defaults(unaligned_seqs="h5seqs_unaligned")
+
+    coll = cogent3.make_unaligned_seqs(raw_aligned_data, moltype="dna", new_type=True)
+    assert isinstance(coll.storage, cogent3_h5seqs.UnalignedSeqsData)
+
+    cogent3.set_storage_defaults(reset=True)
+
+    coll = cogent3.make_unaligned_seqs(raw_aligned_data, moltype="dna", new_type=True)
+    assert not isinstance(coll.storage, cogent3_h5seqs.UnalignedSeqsData)
+
+
+@pytest.mark.parametrize(
+    "mk_obj", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
+)
+def test_del_unaligned_aligned(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
+    # passing a filename without a suffix means it will be cleaned
+    # up on object deletion
+    outpath = tmp_path / "output"
+    assert not outpath.exists()
+    store = mk_obj(
+        outpath, data=raw_aligned_data, in_memory=False, alphabet=dna_alpha, mode="w"
+    )
+    assert outpath.exists()
+    del store
+    assert not outpath.exists()
