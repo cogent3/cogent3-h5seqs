@@ -176,7 +176,13 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return self._file.mode in _writeable_modes
 
     def __del__(self):
+        if not hasattr(self, "_file"):
+            return
+
         path = pathlib.Path(self._file.filename)
+        if self._file and self._file.id.valid:
+            self._file.close()
+
         if path.exists() and not path.suffix:
             # we treat these as a temporary file
             with contextlib.suppress(PermissionError):
