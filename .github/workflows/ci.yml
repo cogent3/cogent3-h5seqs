@@ -44,7 +44,7 @@ jobs:
           parallel: true
           github-token: ${{ secrets.github_token }}
           flag-name: run-${{matrix.python-version}}-${{matrix.os}}
-          file: "tests/lcov-${{matrix.os}}-${{matrix.python-version}}.lcov"
+          file: "lcov-${{matrix.os}}-${{matrix.python-version}}.lcov"
 
   finish:
     name: "Finish Coveralls"
