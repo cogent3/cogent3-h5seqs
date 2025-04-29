@@ -1,3 +1,5 @@
+[![Coverage Status](https://coveralls.io/repos/github/GavinHuttley/cogent3-h5seqs/badge.svg?branch=develop)](https://coveralls.io/github/GavinHuttley/cogent3-h5seqs?branch=develop)
+
 # cogent3-h5seqs: a storage driver for cogent3 sequence collections
 
 Install
