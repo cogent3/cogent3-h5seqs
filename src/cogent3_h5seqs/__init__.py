@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import uuid
 import pathlib
@@ -32,8 +33,8 @@ OptInt = int | None
 OptStr = str | None
 
 # for storing large dicts in HDF5
-offset_dtype = dt = numpy.dtype(
-    [("key", h5py.string_dtype(encoding="utf-8")), ("value", numpy.int64)]
+offset_dtype = numpy.dtype(
+    [("key", h5py.special_dtype(vlen=bytes)), ("value", numpy.int64)]
 )
 # HDF5 file modes
 # x and w- mean create file, fail if exists
@@ -108,7 +109,9 @@ def _set_offset(h5file, offset: dict[str, int] | None) -> None:
     if not offset or h5file.mode not in _writeable_modes:
         return
 
-    data = numpy.array(list(offset.items()), dtype=offset_dtype)
+    data = numpy.array(
+        [(k.encode("utf8"), v) for k, v in offset.items()], dtype=offset_dtype
+    )
     _set_group(h5file, "offset", data)
 
 
@@ -117,7 +120,7 @@ def _set_reversed_seqs(h5file, reverse_seqs: frozenset[str] | None) -> None:
     if not reverse_seqs or h5file.mode not in _writeable_modes:
         return
 
-    data = numpy.array(list(reverse_seqs), dtype=h5py.string_dtype(encoding="utf-8"))
+    data = numpy.array([s.encode("utf8") for s in reverse_seqs], dtype="S")
     _set_group(h5file, "reversed_seqs", data)
 
 
@@ -173,9 +176,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return self._file.mode in _writeable_modes
 
     def __del__(self):
+        if not hasattr(self, "_file"):
+            return
+
         path = pathlib.Path(self._file.filename)
+        if self._file and self._file.id.valid:
+            self._file.close()
+
         if path.exists() and not path.suffix:
-            # temporary file
+            # we treat these as a temporary file
             path.unlink(missing_ok=True)
 
     def __eq__(

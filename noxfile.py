@@ -12,6 +12,7 @@ def test(session):
         "-s",
         "-x",
         ".",
+        *session.posargs,
     )
 
 
