@@ -7,7 +7,7 @@
 Install
 
 ```
-pip install "cogent3 @ git+https://github.com/cogent3/cogent3.git@develop"
+pip install https://github.com/GavinHuttley/cogent3-h5seqs.git
 ```
 
 Usage
