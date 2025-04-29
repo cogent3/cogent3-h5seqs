@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import uuid
 import pathlib
@@ -177,8 +178,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def __del__(self):
         path = pathlib.Path(self._file.filename)
         if path.exists() and not path.suffix:
-            # temporary file
-            path.unlink(missing_ok=True)
+            # we treat these as a temporary file
+            with contextlib.suppress(PermissionError):
+                # windows is a pain, with another process potentially
+                # touching the file and interfering with removal
+                path.unlink(missing_ok=True)
 
     def __eq__(
         self,
