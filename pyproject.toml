@@ -7,10 +7,10 @@ license = { file = "LICENSE" }
 authors = [
     { name = "Gavin Huttley", email = "Gavin.Huttley@anu.edu.au" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "blosc2>=3.3.0",
-    "cogent3>=2025.3.22a4",
+    "cogent3 @ git+https://github.com/cogent3/cogent3.git@develop",
     "h5py>=3.13.0",
     "hdf5plugin>=5.1.0",
     "numpy>=2.2.4",
@@ -20,6 +20,10 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# until we have a released version of cogent3 supporting drivers
+allow-direct-references = true
 
 [dependency-groups]
 dev = [
