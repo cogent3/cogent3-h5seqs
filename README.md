@@ -1,4 +1,6 @@
-[![Coverage Status](https://coveralls.io/repos/github/GavinHuttley/cogent3-h5seqs/badge.svg?branch=develop)](https://coveralls.io/github/GavinHuttley/cogent3-h5seqs?branch=develop)
+[![CI](https://github.com/cogent3/cogent3-h5seqs/actions/workflows/ci.yml/badge.svg)](https://github.com/cogent3/cogent3-h5seqs/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/cogent3/cogent3-h5seqs/badge.svg?branch=develop)](https://coveralls.io/github/cogent3/cogent3-h5seqs?branch=develop)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 # cogent3-h5seqs: a storage driver for cogent3 sequence collections
 
