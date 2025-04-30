@@ -954,6 +954,7 @@ def make_unaligned(
     alphabet=None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ):
     raise NotImplementedError(f"make_unaligned not implemented for {type(path)}")
 
@@ -968,6 +969,7 @@ def _(
     alphabet=None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> UnalignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
@@ -979,7 +981,7 @@ def _(
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
-        check=mode == "r",
+        check=check or mode == "r",
     )
     if data is not None:
         data = useqs.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
@@ -996,6 +998,7 @@ def _(
     alphabet=None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> UnalignedSeqsData:
     return make_unaligned(
         str(path.expanduser()),
@@ -1005,6 +1008,7 @@ def _(
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
+        check=check,
     )
 
 
@@ -1018,6 +1022,7 @@ def _(
     alphabet=None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> UnalignedSeqsData:
     # create a writeable in memory record
     mode = "w"
@@ -1030,6 +1035,7 @@ def _(
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
+        check=check,
     )
 
 
@@ -1042,12 +1048,13 @@ def make_aligned(
     alphabet=None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> AlignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
 
     asd = AlignedSeqsData(
         gapped_seqs=h5file,
-        check=h5file.mode == "r",
+        check=check or h5file.mode == "r",
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
