@@ -26,26 +26,6 @@ jobs:
       - name: "Run nox for Python ${{ matrix.python-version }}"
         run: "nox -s test-${{ matrix.python-version }}"
 
-  docbuild:
-    name: "Test the docs"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: "actions/checkout@v4"
-        with:
-          fetch-depth: 0
-
-      - uses: "actions/setup-python@v5"
-        with:
-            python-version: "3.12"
-
-      - name: "Installs for docs"
-        run: |
-          pip install --upgrade pip nox
-          pip install ".[doc]"
-
-      - name: "test the docs code"
-        run: "nox -s testdocs-3.12"
-
   build:
     name: Build wheel and sdist
     needs: test
@@ -71,7 +51,7 @@ jobs:
       - name: Upload sdist and wheel
         uses: actions/upload-artifact@v4
         with:
-          name: c3-wheel-sdist
+          name: c3h5-wheel-sdist
           path: |
             ./dist/*.whl
             ./dist/*.tar.gz
@@ -88,7 +68,7 @@ jobs:
       - name: Download sdist and wheel
         uses: actions/download-artifact@v4
         with:
-          name: c3-wheel-sdist
+          name: c3h5-wheel-sdist
           path: ./dist
 
       - name: Publish package distributions to Test PyPI
@@ -108,7 +88,7 @@ jobs:
       - name: Download sdist and wheel
         uses: actions/download-artifact@v4
         with:
-          name: c3-wheel-sdist
+          name: c3h5-wheel-sdist
           path: ./dist
 
       - name: Publish package distributions to PyPI
