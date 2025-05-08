@@ -58,7 +58,7 @@ jobs:
   
   release_test:
     name: Release to Test PyPI
-    needs: [build, docbuild]
+    needs: [build]
     environment: release_test
     runs-on: ubuntu-latest
     permissions:
