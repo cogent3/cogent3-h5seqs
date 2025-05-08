@@ -1,18 +1,18 @@
-import contextlib
 import functools
-import uuid
 import pathlib
-import hdf5plugin  # noqa
-import numpy
 import typing
+import uuid
+
 import h5py
+import hdf5plugin
+import numpy
 import typing_extensions
 from cogent3.core import new_alignment as c3_alignment
-from cogent3.core import new_moltype as c3_moltype
 from cogent3.core import new_alphabet as c3_alphabet
+from cogent3.core import new_moltype as c3_moltype
 from cogent3.core import new_sequence as c3_sequence
-from cogent3.parse.sequence import SequenceParserBase
 from cogent3.format.sequence import SequenceWriterBase
+from cogent3.parse.sequence import SequenceParserBase
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from cogent3.core.new_alignment import Alignment, SequenceCollection
@@ -92,7 +92,7 @@ def _valid_h5seqs(h5file: h5py.File, main_seq_grp: str) -> bool:
     )
 
 
-def _set_group(h5file, group_name: str, value: numpy.ndarray) -> None:
+def _set_group(h5file: h5py.File, group_name: str, value: numpy.ndarray) -> None:
     if group_name in h5file:
         del h5file[group_name]
 
@@ -104,7 +104,7 @@ def _set_group(h5file, group_name: str, value: numpy.ndarray) -> None:
     )
 
 
-def _set_offset(h5file, offset: dict[str, int] | None) -> None:
+def _set_offset(h5file: h5py.File, offset: dict[str, int] | None) -> None:
     # set the offset as a special group
     if not offset or h5file.mode not in _writeable_modes:
         return
@@ -115,7 +115,7 @@ def _set_offset(h5file, offset: dict[str, int] | None) -> None:
     _set_group(h5file, "offset", data)
 
 
-def _set_reversed_seqs(h5file, reverse_seqs: frozenset[str] | None) -> None:
+def _set_reversed_seqs(h5file: h5py.File, reverse_seqs: frozenset[str] | None) -> None:
     # set the reverse seqs as a special group
     if not reverse_seqs or h5file.mode not in _writeable_modes:
         return
@@ -146,14 +146,14 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         offset: dict[str, int] | None = None,
         check: bool = False,
         reversed_seqs: frozenset[str] | None = None,
-    ):
+    ) -> None:
         self._alphabet = alphabet
         self._file = data
 
         reversed_seqs = reversed_seqs or frozenset()
         _set_reversed_seqs(self._file, reversed_seqs)
         offset = offset or {}
-        _set_offset(self._file, offset=self.offset | offset)
+        _set_offset(self._file, offset=offset)
 
         if check:
             self._check_file(self._file)
@@ -161,9 +161,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._ungapped_grp):
-            raise ValueError(f"File {file} is not a valid {cls.__name__} file")
+            msg = f"File {file} is not a valid {cls.__name__} file"
+            raise ValueError(msg)
 
-    def _populate_attrs(self):
+    def _populate_attrs(self) -> None:
         data = self._file
         _assign_attr_if_missing(data, "alphabet", "".join(self._alphabet))
         _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char)
@@ -175,7 +176,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         """whether the file is writable"""
         return self._file.mode in _writeable_modes
 
-    def __del__(self):
+    def __del__(self) -> None:
         if not hasattr(self, "_file"):
             return
 
@@ -240,7 +241,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return len(self.names)
 
     @property
-    def alphabet(self):
+    def alphabet(self) -> c3_alphabet.AlphabetABC:
         return self._alphabet
 
     @property
@@ -250,7 +251,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def offset(self) -> dict[str, int]:
-        all_offsets = {n: 0 for n in self.names}
+        all_offsets = dict.fromkeys(self.names, 0)
         if "offset" not in self._file:
             return all_offsets
         data = self._file["offset"][:]
@@ -359,7 +360,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             offsets relative to parent sequence to add as {name: int, ...}
         """
         if not self.writable:
-            raise PermissionError("Cannot add sequences to a read-only file")
+            msg = "Cannot add sequences to a read-only file"
+            raise PermissionError(msg)
 
         self._populate_attrs()
 
@@ -396,7 +398,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     ) -> numpy.ndarray:
         """Returns the sequence as a numpy array of indices"""
         if seqid not in self.names:
-            raise KeyError(f"Sequence {seqid} not found")
+            msg = f"Sequence {seqid!r} not found"
+            raise KeyError(msg)
         start = start or 0
         stop = stop if stop is not None else self.get_seq_length(seqid=seqid)
         step = step or 1
@@ -447,7 +450,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
         if seqid not in self.names:
-            raise KeyError(f"Sequence {seqid} not found")
+            msg = f"Sequence {seqid!r} not found"
+            raise KeyError(msg)
         return len(self._file[f"{self._ungapped_grp}/{seqid}"])
 
     @classmethod
@@ -493,7 +497,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return obj
 
     @classmethod
-    def from_file(cls, path: str | pathlib.Path, mode: str = "r"):
+    def from_file(
+        cls, path: str | pathlib.Path, mode: str = "r"
+    ) -> typing_extensions.Self:
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
             chars=h5file.attrs.get("alphabet"),
@@ -515,9 +521,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def write(self, path: str | pathlib.Path) -> None:
         """Write the UnalignedSeqsData object to a file"""
         if path.suffix != f".{UNALIGNED_SUFFIX}":
-            raise ValueError(
-                f"path {path} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
-            )
+            msg = f"path {path} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
+            raise ValueError(msg)
         self._write(path=path)
 
 
@@ -535,7 +540,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         check: bool = True,
         reversed_seqs: frozenset[str] | None = None,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(
             data=gapped_seqs,
             alphabet=alphabet,
@@ -547,7 +552,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._gapped_grp):
-            raise ValueError(f"File {file} is not a valid {cls.__name__} file")
+            msg = f"File {file} is not a valid {cls.__name__} file"
+            raise ValueError(msg)
 
     def __eq__(self, other: typing_extensions.Self) -> bool:
         if not isinstance(other, self.__class__):
@@ -591,7 +597,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
         if seqid not in self.names:
-            raise KeyError(f"Sequence {seqid} not found")
+            msg = f"Sequence {seqid!r} not found"
+            raise KeyError(msg)
         if seqid not in self._ungapped_grp:
             self._make_gaps_and_ungapped(seqid)
         return len(self._file[f"{self._ungapped_grp}/{seqid}"])
@@ -685,7 +692,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         return obj
 
     @classmethod
-    def from_file(cls, path: str | pathlib.Path, mode: str = "r"):
+    def from_file(
+        cls, path: str | pathlib.Path, mode: str = "r"
+    ) -> typing_extensions.Self:
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
             chars=h5file.attrs.get("alphabet"),
@@ -792,7 +801,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
         for index, name in enumerate(names):
             if name not in self.names:
-                raise KeyError(f"Sequence {name} not found")
+                msg = f"Sequence {name!r} not found"
+                raise KeyError(msg)
             array_seqs[index] = self.get_gapped_seq_array(
                 seqid=name,
                 start=start,
@@ -858,7 +868,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             dict of offsets relative to parent for the new sequences.
         """
         if not self.writable:
-            raise PermissionError("Cannot add sequences to a read-only file")
+            msg = "Cannot add sequences to a read-only file"
+            raise PermissionError(msg)
 
         self._populate_attrs()
 
@@ -870,9 +881,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         names = set() if force_unique_keys else set(self.names)
         for seqid, seq in seqs.items():
             if align_len and len(seq) != align_len:
-                raise ValueError(
-                    f"{seqid!r} length {len(seq)} does not equal {align_len=}"
-                )
+                msg = f"{seqid!r} length {len(seq)} does not equal {align_len=}"
+                raise ValueError(msg)
             if seqid in names:
                 continue
 
@@ -938,9 +948,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def write(self, path: str | pathlib.Path) -> None:
         """Write the UnalignedSeqsData object to a file"""
         if path.suffix != f".{ALIGNED_SUFFIX}":
-            raise ValueError(
-                f"path {path} does not have the expected suffix '.{ALIGNED_SUFFIX}'"
-            )
+            msg = f"path {path} does not have the expected suffix '.{ALIGNED_SUFFIX}'"
+            raise ValueError(msg)
         self._write(path=path)
 
 
@@ -951,11 +960,13 @@ def make_unaligned(
     data=None,
     mode: str = "r",
     in_memory: bool = False,
-    alphabet=None,
+    alphabet: c3_alphabet.AlphabetABC | None = None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
-):
-    raise NotImplementedError(f"make_unaligned not implemented for {type(path)}")
+    check: bool = False,
+) -> None:
+    msg = f"make_unaligned not implemented for {type(path)}"
+    raise NotImplementedError(msg)
 
 
 @make_unaligned.register
@@ -965,13 +976,15 @@ def _(
     data=None,
     mode: str = "r",
     in_memory: bool = False,
-    alphabet=None,
+    alphabet: c3_alphabet.AlphabetABC | None = None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> UnalignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
-        raise ValueError("alphabet must be provided for write mode")
+        msg = "alphabet must be provided for write mode"
+        raise ValueError(msg)
 
     mode = "w" if in_memory else mode
     useqs = UnalignedSeqsData(
@@ -979,7 +992,7 @@ def _(
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
-        check=mode == "r",
+        check=check or mode == "r",
     )
     if data is not None:
         data = useqs.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
@@ -993,9 +1006,10 @@ def _(
     data=None,
     mode: str = "r",
     in_memory: bool = False,
-    alphabet=None,
+    alphabet: c3_alphabet.AlphabetABC | None = None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> UnalignedSeqsData:
     return make_unaligned(
         str(path.expanduser()),
@@ -1005,6 +1019,7 @@ def _(
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
+        check=check,
     )
 
 
@@ -1015,9 +1030,10 @@ def _(
     data=None,
     mode: str = "r",
     in_memory: bool = False,
-    alphabet=None,
+    alphabet: c3_alphabet.AlphabetABC | None = None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> UnalignedSeqsData:
     # create a writeable in memory record
     mode = "w"
@@ -1030,6 +1046,7 @@ def _(
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
+        check=check,
     )
 
 
@@ -1039,15 +1056,16 @@ def make_aligned(
     data=None,
     mode: str = "r",
     in_memory: bool = False,
-    alphabet=None,
+    alphabet: c3_alphabet.AlphabetABC | None = None,
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
+    check: bool = False,
 ) -> AlignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
 
     asd = AlignedSeqsData(
         gapped_seqs=h5file,
-        check=h5file.mode == "r",
+        check=check or h5file.mode == "r",
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
@@ -1067,9 +1085,8 @@ def load_seqs_data(
     elif path.suffix == f".{ALIGNED_SUFFIX}":
         klass = AlignedSeqsData
     else:
-        raise ValueError(
-            f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX} or {ALIGNED_SUFFIX}"
-        )
+        msg = f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX!r} or {ALIGNED_SUFFIX!r}"
+        raise ValueError(msg)
 
     return klass.from_file(path=path, mode=mode)
 
@@ -1086,18 +1103,19 @@ def write_seqs_data(
     supported_suffixes = {ALIGNED_SUFFIX, UNALIGNED_SUFFIX}
     suffix = path.suffix[1:]
     if suffix not in supported_suffixes:
-        raise ValueError(
-            f"path {path} does not have a supported suffix {supported_suffixes}"
-        )
+        msg = f"path {path} does not have a supported suffix {supported_suffixes}"
+        raise ValueError(msg)
     cls = UnalignedSeqsData if suffix == UNALIGNED_SUFFIX else AlignedSeqsData
     alphabet = seqcoll.storage.alphabet
     data = {s.name: numpy.array(s) for s in seqcoll.seqs}
     offset = seqcoll.storage.offset
     reversed_seqs = seqcoll.storage.reversed_seqs
-    kwargs = (
-        dict(data=data, alphabet=alphabet, offset=offset, reversed_seqs=reversed_seqs)
-        | kwargs
-    )
+    kwargs = {
+        "data": data,
+        "alphabet": alphabet,
+        "offset": offset,
+        "reversed_seqs": reversed_seqs,
+    } | kwargs
     store = cls.from_seqs(**kwargs)
     store.write(path=path)
     return path
@@ -1113,7 +1131,7 @@ class H5SeqsParser(SequenceParserBase):
         return {UNALIGNED_SUFFIX, ALIGNED_SUFFIX}
 
     @property
-    def result_is_storage(self):
+    def result_is_storage(self) -> bool:
         return True
 
     @property

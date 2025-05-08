@@ -1,7 +1,8 @@
-import cogent3_h5seqs
 import cogent3
 import numpy
 import pytest
+
+import cogent3_h5seqs
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ def small(raw_data, dna_alpha):
 
 @pytest.mark.parametrize("offset", [None, {"s1": 2}])
 def test_make_unaligned(raw_data, offset, dna_alpha):
-    offset_expect = {k: 0 for k in raw_data} | (offset or {})
+    offset_expect = dict.fromkeys(raw_data, 0) | (offset or {})
     ua = cogent3_h5seqs.make_unaligned(
         "memory", data=raw_data, in_memory=True, alphabet=dna_alpha, offset=offset
     )
