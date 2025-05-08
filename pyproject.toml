@@ -10,7 +10,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "blosc2",
-    "cogent3>=2025.5.8a1",
+    "cogent3>=2025.5.8a2",
     "h5py>=3.13.0",
     "hdf5plugin>=5.1.0",
     "numpy>=2.2.4",
@@ -48,7 +48,9 @@ h5seqs_unaligned = "cogent3_h5seqs:UnalignedSeqsData"
 h5seqs_aligned = "cogent3_h5seqs:AlignedSeqsData"
 
 [project.entry-points."cogent3.parse.sequence"]
-c3h5 = "cogent3_h5seqs:H5SeqsParser"
+c3h5a = "cogent3_h5seqs:H5SeqsAlignedParser"
+c3h5u = "cogent3_h5seqs:H5SeqsUnalignedParser"
 
 [project.entry-points."cogent3.format.sequence"]
-c3h5 = "cogent3_h5seqs:H5SeqsWriter"
+c3h5a = "cogent3_h5seqs:H5AlignedSeqsWriter"
+c3h5u = "cogent3_h5seqs:H5UnalignedSeqsWriter"

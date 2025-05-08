@@ -475,11 +475,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     @classmethod
     def from_storage(
         cls,
-        seqcoll,
+        seqcoll: c3_alignment.SequenceCollection,
         path: str | pathlib.Path | None = None,
         **kwargs,
     ) -> typing_extensions.Self:
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
+        if type(seqcoll) is not c3_alignment.SequenceCollection:
+            msg = f"Expected seqcoll to be an instance of new_type SequenceCollection, got {type(seqcoll).__name__!r}"
+            raise TypeError(msg)
+
         in_memory = kwargs.pop("in_memory", False)
         h5file = open_h5_file(path=path, mode="w", in_memory=in_memory)
         obj = cls(
@@ -520,6 +524,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def write(self, path: str | pathlib.Path) -> None:
         """Write the UnalignedSeqsData object to a file"""
+        path = pathlib.Path(path).expanduser().absolute()
         if path.suffix != f".{UNALIGNED_SUFFIX}":
             msg = f"path {path} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
             raise ValueError(msg)
@@ -670,11 +675,15 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @classmethod
     def from_storage(
         cls,
-        seqcoll,
+        seqcoll: c3_alignment.Alignment,
         path: str | pathlib.Path | None = None,
         **kwargs,
     ) -> typing_extensions.Self:
         """convert a cogent3 AlignedSeqsDataABC into AlignedSeqsData"""
+        if type(seqcoll) is not c3_alignment.Alignment:
+            msg = f"Expected seqcoll to be an instance of new_type Alignment, got {type(seqcoll).__name__!r}"
+            raise TypeError(msg)
+
         in_memory = kwargs.pop("in_memory", False)
         h5file = open_h5_file(path=path, mode="w", in_memory=in_memory)
         obj = cls(
@@ -1075,18 +1084,27 @@ def make_aligned(
     return asd
 
 
-def load_seqs_data(
+def load_seqs_data_unaligned(
     path: str | pathlib.Path, mode: str = "r"
-) -> UnalignedSeqsData | AlignedSeqsData:
-    """load hdf5 sequence data from file"""
+) -> UnalignedSeqsData:
+    """load hdf5 unaligned sequence data from file"""
     path = pathlib.Path(path)
-    if path.suffix == f".{UNALIGNED_SUFFIX}":
-        klass = UnalignedSeqsData
-    elif path.suffix == f".{ALIGNED_SUFFIX}":
-        klass = AlignedSeqsData
-    else:
-        msg = f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX!r} or {ALIGNED_SUFFIX!r}"
+    if path.suffix != f".{UNALIGNED_SUFFIX}":
+        msg = f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX!r}"
         raise ValueError(msg)
+    klass = UnalignedSeqsData
+    return klass.from_file(path=path, mode=mode)
+
+
+def load_seqs_data_aligned(
+    path: str | pathlib.Path, mode: str = "r"
+) -> AlignedSeqsData:
+    """load hdf5 aligned sequence data from file"""
+    path = pathlib.Path(path)
+    if path.suffix != f".{ALIGNED_SUFFIX}":
+        msg = f"File {path} does not have an expected suffix {ALIGNED_SUFFIX!r}"
+        raise ValueError(msg)
+    klass = AlignedSeqsData
 
     return klass.from_file(path=path, mode=mode)
 
@@ -1100,11 +1118,20 @@ def write_seqs_data(
     if isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)):
         return seqcoll.storage.write(path=path)
 
-    supported_suffixes = {ALIGNED_SUFFIX, UNALIGNED_SUFFIX}
+    path = pathlib.Path(path)
+    supported_suffixes = {
+        ALIGNED_SUFFIX: c3_alignment.Alignment,
+        UNALIGNED_SUFFIX: c3_alignment.SequenceCollection,
+    }
     suffix = path.suffix[1:]
     if suffix not in supported_suffixes:
         msg = f"path {path} does not have a supported suffix {supported_suffixes}"
         raise ValueError(msg)
+
+    if type(seqcoll) is not supported_suffixes[suffix]:
+        msg = f"{suffix=} invalid for {type(seqcoll).__name__!r}"
+        raise TypeError(msg)
+
     cls = UnalignedSeqsData if suffix == UNALIGNED_SUFFIX else AlignedSeqsData
     alphabet = seqcoll.storage.alphabet
     data = {s.name: numpy.array(s) for s in seqcoll.seqs}
@@ -1121,14 +1148,24 @@ def write_seqs_data(
     return path
 
 
-class H5SeqsParser(SequenceParserBase):
+class H5SeqsUnalignedParser(SequenceParserBase):
     @property
     def name(self) -> tuple[str, ...]:
-        return "c3h5"
+        return "c3h5u"
+
+    @property
+    def supports_unaligned(self) -> bool:
+        """True if the loader supports unaligned sequences"""
+        return True
+
+    @property
+    def supports_aligned(self) -> bool:
+        """True if the loader supports aligned sequences"""
+        return False
 
     @property
     def supported_suffixes(self) -> set[str]:
-        return {UNALIGNED_SUFFIX, ALIGNED_SUFFIX}
+        return {UNALIGNED_SUFFIX}
 
     @property
     def result_is_storage(self) -> bool:
@@ -1138,17 +1175,57 @@ class H5SeqsParser(SequenceParserBase):
     def loader(
         self,
     ) -> typing.Callable[[pathlib.Path], UnalignedSeqsData | AlignedSeqsData]:
-        return load_seqs_data
+        return load_seqs_data_unaligned
 
 
-class H5SeqsWriter(SequenceWriterBase):
+class H5SeqsAlignedParser(SequenceParserBase):
     @property
     def name(self) -> tuple[str, ...]:
-        return "c3h5"
+        return "c3h5a"
+
+    @property
+    def supports_unaligned(self) -> bool:
+        """True if the loader supports unaligned sequences"""
+        return False
+
+    @property
+    def supports_aligned(self) -> bool:
+        """True if the loader supports aligned sequences"""
+        return True
 
     @property
     def supported_suffixes(self) -> set[str]:
-        return {UNALIGNED_SUFFIX, ALIGNED_SUFFIX}
+        return {ALIGNED_SUFFIX}
+
+    @property
+    def result_is_storage(self) -> bool:
+        return True
+
+    @property
+    def loader(
+        self,
+    ) -> typing.Callable[[pathlib.Path], UnalignedSeqsData | AlignedSeqsData]:
+        return load_seqs_data_aligned
+
+
+class H5UnalignedSeqsWriter(SequenceWriterBase):
+    @property
+    def name(self) -> tuple[str, ...]:
+        return "c3h5u"
+
+    @property
+    def supports_unaligned(self) -> bool:
+        """True if the loader supports unaligned sequences"""
+        return True
+
+    @property
+    def supports_aligned(self) -> bool:
+        """True if the loader supports aligned sequences"""
+        return False
+
+    @property
+    def supported_suffixes(self) -> set[str]:
+        return {UNALIGNED_SUFFIX}
 
     def write(
         self,
@@ -1157,9 +1234,30 @@ class H5SeqsWriter(SequenceWriterBase):
         seqcoll: SeqsTypes,
         **kwargs,
     ) -> pathlib.Path:
+        path = pathlib.Path(path)
         kwargs.pop("order", None)
         return write_seqs_data(
             path=path,
             seqcoll=seqcoll,
             **kwargs,
         )
+
+
+class H5AlignedSeqsWriter(H5UnalignedSeqsWriter):
+    @property
+    def name(self) -> tuple[str, ...]:
+        return "c3h5a"
+
+    @property
+    def supports_unaligned(self) -> bool:
+        """True if the loader supports unaligned sequences"""
+        return False
+
+    @property
+    def supports_aligned(self) -> bool:
+        """True if the loader supports aligned sequences"""
+        return True
+
+    @property
+    def supported_suffixes(self) -> set[str]:
+        return {ALIGNED_SUFFIX}
