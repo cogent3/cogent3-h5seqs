@@ -1,6 +1,6 @@
 [project]
 name = "cogent3-h5seqs"
-version = "0.1.0"
+dynamic = ["version"]
 description = "HDF5 storage driver for cogent3 sequence collections"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -20,6 +20,9 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/cogent3_h5seqs/__init__.py"
 
 [tool.hatch.metadata]
 # until we have a released version of cogent3 supporting drivers
