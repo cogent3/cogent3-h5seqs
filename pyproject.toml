@@ -1,6 +1,6 @@
 [project]
 name = "cogent3-h5seqs"
-version = "0.1.0"
+dynamic = ["version"]
 description = "HDF5 storage driver for cogent3 sequence collections"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -10,7 +10,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "blosc2",
-    "cogent3>=2025.5.8a1",
+    "cogent3>=2025.5.8a2",
     "h5py>=3.13.0",
     "hdf5plugin>=5.1.0",
     "numpy>=2.2.4",
@@ -20,6 +20,9 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/cogent3_h5seqs/__init__.py"
 
 [tool.hatch.metadata]
 # until we have a released version of cogent3 supporting drivers
@@ -48,7 +51,9 @@ h5seqs_unaligned = "cogent3_h5seqs:UnalignedSeqsData"
 h5seqs_aligned = "cogent3_h5seqs:AlignedSeqsData"
 
 [project.entry-points."cogent3.parse.sequence"]
-c3h5 = "cogent3_h5seqs:H5SeqsParser"
+c3h5a = "cogent3_h5seqs:H5SeqsAlignedParser"
+c3h5u = "cogent3_h5seqs:H5SeqsUnalignedParser"
 
 [project.entry-points."cogent3.format.sequence"]
-c3h5 = "cogent3_h5seqs:H5SeqsWriter"
+c3h5a = "cogent3_h5seqs:H5AlignedSeqsWriter"
+c3h5u = "cogent3_h5seqs:H5UnalignedSeqsWriter"

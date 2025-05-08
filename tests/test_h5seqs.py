@@ -1,3 +1,5 @@
+import pathlib
+
 import cogent3
 import numpy
 import pytest
@@ -119,14 +121,14 @@ def test_write(tmp_path, small):
     path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
     small.write(path)
     assert path.is_file()
-    loaded = cogent3_h5seqs.load_seqs_data(path)
+    loaded = cogent3_h5seqs.load_seqs_data_unaligned(path)
     assert loaded == small
 
 
 def test_write_twice(tmp_path, small):
     path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
     small.write(path)
-    loaded = cogent3_h5seqs.load_seqs_data(path, mode="r+")
+    loaded = cogent3_h5seqs.load_seqs_data_unaligned(path, mode="r+")
     assert loaded == small
     # write has no effect
     loaded.write(path)
@@ -141,7 +143,7 @@ def test_write_invalid(tmp_path, small):
 def test_load_invalid(tmp_path):
     path = tmp_path / "unaligned.h5seqs"
     with pytest.raises(ValueError):
-        cogent3_h5seqs.load_seqs_data(path)
+        cogent3_h5seqs.load_seqs_data_unaligned(path)
 
 
 def test_make_alignedseqsdata(raw_aligned_data, dna_alpha):
@@ -439,3 +441,53 @@ def test_del_unaligned_aligned(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
     assert outpath.exists()
     del store
     assert not outpath.exists()
+
+
+@pytest.mark.parametrize("path_type", [pathlib.Path, str])
+def test_writing_alignment(tmp_path, path_type):
+    outpath = tmp_path / "alignment_output.c3h5a"
+    aln = cogent3.get_dataset("brca1")
+    assert not outpath.exists()
+    aln.write(path_type(outpath))
+    assert outpath.exists()
+
+
+@pytest.mark.parametrize("path_type", [pathlib.Path, str])
+def test_writing_seqcoll(tmp_path, path_type):
+    outpath = tmp_path / "alignment_output.c3h5u"
+    coll = cogent3.get_dataset("brca1").degap()
+    assert not outpath.exists()
+    coll.write(path_type(outpath))
+    assert outpath.exists()
+
+
+def test_writing_seqcoll_wrong_suffix(tmp_path):
+    outpath = tmp_path / "alignment_output.c3h5a"  # invalid suffix
+    coll = cogent3.get_dataset("brca1").degap()
+    with pytest.raises(ValueError):
+        coll.write(outpath)
+
+
+def test_writing_alignment_wrong_suffix(tmp_path):
+    outpath = tmp_path / "alignment_output.c3h5u"  # invalid suffix
+    coll = cogent3.get_dataset("brca1")
+    with pytest.raises(ValueError):
+        coll.write(outpath)
+
+
+def test_load_unaligned_wrong_suffix(tmp_path):
+    outpath = tmp_path / "alignment_output.c3h5a"
+    aln = cogent3.get_dataset("brca1")
+    aln.write(outpath)
+    # alignment invalid for unaligned
+    with pytest.raises(ValueError):
+        cogent3.load_unaligned_seqs(outpath, moltype="dna", new_type=True)
+
+
+def test_load_aligned_wrong_suffix(tmp_path):
+    outpath = tmp_path / "alignment_output.c3h5u"
+    coll = cogent3.get_dataset("brca1").degap()
+    coll.write(outpath)
+    # unaligned invalid for aligned
+    with pytest.raises(ValueError):
+        cogent3.load_aligned_seqs(outpath, moltype="dna", new_type=True)
