@@ -46,6 +46,7 @@ select = ["ALL"]
 # FBT001 and FBT002, positional boolean arguments are allowed!
 # PT011, I disagree about checking error messages as well
 # as exception types as it doubles the "cost" of fixing typos
+# ANN003 we don't require type hinting for kwargs
 ignore = [
     "COM812",
     "EXE002",
@@ -58,6 +59,7 @@ ignore = [
     "FBT001",
     "FBT002",
     "PT011",
+    "ANN003",
     ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
