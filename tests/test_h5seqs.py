@@ -125,6 +125,12 @@ def test_write(tmp_path, small):
     assert loaded == small
 
 
+def test_close(small):
+    # successive calls should not fail
+    small.close()
+    small.close()
+
+
 def test_write_twice(tmp_path, small):
     path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
     small.write(path)

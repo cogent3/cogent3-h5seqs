@@ -212,13 +212,12 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return self._file.mode in _writeable_modes
 
     def __del__(self) -> None:
-        if not hasattr(self, "_file"):
+        if not (getattr(self, "_file", None) and self._file.id):
             return
 
+        # we need to get the file name before closing file
         path = pathlib.Path(self._file.filename)
-        if self._file and self._file.id.valid:
-            self._file.close()
-
+        self._file.close()
         if path.exists() and not path.suffix:
             # we treat these as a temporary file
             path.unlink(missing_ok=True)
@@ -583,6 +582,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             msg = f"path {path} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
             raise ValueError(msg)
         self._write(path=path)
+
+    def close(self):
+        """close the HDF file"""
+        if not (self._file and self._file.id):
+            return
+
+        if not self._attr_set:
+            self._populate_attrs()
+
+        self._file.close()
 
 
 class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
