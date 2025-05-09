@@ -805,11 +805,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             self._make_gaps_and_ungapped(seqid)
         return self._file[f"{self._gaps_grp}/{seqid}"][:]
 
-    def _get_ungapped(self, seqid: str) -> numpy.ndarray:
-        if seqid not in self._file.get(self._ungapped_grp, {}):
-            self._make_gaps_and_ungapped(seqid)
-        return self._file[f"{self._ungapped_grp}/{seqid}"][:]
-
     def get_gaps(self, seqid: str) -> numpy.ndarray:
         return self._get_gaps(seqid)
 
