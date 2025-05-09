@@ -491,3 +491,12 @@ def test_load_aligned_wrong_suffix(tmp_path):
     # unaligned invalid for aligned
     with pytest.raises(ValueError):
         cogent3.load_aligned_seqs(outpath, moltype="dna", new_type=True)
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_set_attr(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    obj.set_attr("test", "1")
+    assert obj.get_attr("test") == "1"
+    copy = obj.copy()
+    assert copy.get_attr("test") == "1"

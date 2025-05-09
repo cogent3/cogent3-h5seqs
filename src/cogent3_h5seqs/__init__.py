@@ -176,6 +176,35 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
         self._attr_set = True
 
+    def set_attr(self, attr_name: str, attr_value: str, force: bool = False) -> None:
+        """Set an attribute on the file
+
+        Parameters
+        ----------
+        attr_name
+            name of the attribute
+        attr_value
+            value to set, should be small
+        force
+            if True, deletes the attribute if it exists and sets it to the new value
+        """
+        if not self.writable:
+            msg = "cannot set attributes on a read-only file"
+            raise PermissionError(msg)
+
+        if attr_name in self._file.attrs:
+            if not force:
+                return
+            del self._file.attrs[attr_name]
+
+        self._file.attrs[attr_name] = attr_value
+
+    def get_attr(self, attr_name: str) -> str:
+        """get attr_name from the file"""
+        if attr_name not in self._file.attrs:
+            msg = f"attribute {attr_name!r} not found"
+            raise KeyError(msg)
+        return self._file.attrs[attr_name]
 
     @property
     def writable(self) -> bool:
