@@ -301,6 +301,28 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         data = self._file["reversed_seqs"][:]
         return frozenset(v.decode("utf8") for v in data)
 
+    def _make_new_h5_file(
+        self,
+        data: h5py.File,
+        alphabet: c3_alphabet.CharAlphabet | None,
+        offset: dict[str, int] | None,
+        reversed_seqs: set[str] | None,
+    ) -> tuple[h5py.File, c3_alphabet.CharAlphabet, dict[str, int], set[str]]:
+        if data is None:
+            data = duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
+        alphabet = alphabet or self.alphabet
+
+        reversed_seqs = reversed_seqs or self.reversed_seqs
+        if alphabet and alphabet != self.alphabet:
+            data.attrs["alphabet"] = "".join(alphabet)
+            data.attrs["moltype"] = alphabet.moltype.name
+
+        if offset := offset or self.offset:
+            _set_offset(data, offset=offset)
+        _set_reversed_seqs(data, reversed_seqs)
+
+        return data, alphabet, offset, reversed_seqs
+
     def copy(
         self,
         data: h5py.File | None = None,
@@ -308,18 +330,12 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         offset: dict[str, int] | None = None,
         reversed_seqs: set[str] | None = None,
     ) -> typing_extensions.Self:
-        if data is None:
-            data = duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
-        alphabet = alphabet or self.alphabet
-        offset = offset or self.offset
-        reversed_seqs = reversed_seqs or self.reversed_seqs
-        if alphabet and alphabet != self.alphabet:
-            data.attrs["alphabet"] = "".join(alphabet)
-            data.attrs["moltype"] = alphabet.moltype.name
-
-        _set_offset(data, offset=offset)
-        _set_reversed_seqs(data, reversed_seqs)
-
+        data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
+            data=data,
+            alphabet=alphabet,
+            offset=offset,
+            reversed_seqs=reversed_seqs,
+        )
         return self.__class__(
             data=data,
             alphabet=alphabet,
@@ -944,6 +960,27 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         reversed_seqs = reversed_seqs or frozenset()
         _set_reversed_seqs(self._file, reversed_seqs)
         return self
+
+    def copy(
+        self,
+        data: h5py.File | None = None,
+        alphabet: c3_alphabet.CharAlphabet | None = None,
+        offset: dict[str, int] | None = None,
+        reversed_seqs: set[str] | None = None,
+    ) -> typing_extensions.Self:
+        data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
+            data=data,
+            alphabet=alphabet,
+            offset=offset,
+            reversed_seqs=reversed_seqs,
+        )
+        return self.__class__(
+            gapped_seqs=data,
+            alphabet=alphabet,
+            offset=offset,
+            reversed_seqs=reversed_seqs,
+            check=False,
+        )
 
     def to_alphabet(
         self,
