@@ -352,6 +352,23 @@ def test_from_storage(mk_obj, raw_aligned_data):
     assert got == coll.storage
 
 
+@pytest.mark.parametrize(
+    "mk_obj", [cogent3.make_unaligned_seqs, cogent3.make_aligned_seqs]
+)
+def test_from_storage_invalid(mk_obj, raw_aligned_data):
+    aligned = mk_obj == cogent3.make_aligned_seqs
+    storage_backend = "h5seqs_aligned" if aligned else "h5seqs_unaligned"
+    coll = mk_obj(
+        raw_aligned_data,
+        moltype="dna",
+        new_type=True,
+        storage_backend=storage_backend,
+        in_memory=True,
+    )
+    with pytest.raises(TypeError):
+        coll.storage.from_storage({}, in_memory=False)
+
+
 def test_aligned_from_names_and_array(small_aligned):
     names = small_aligned.names
     data = numpy.array(
@@ -509,7 +526,35 @@ def test_load_aligned_wrong_suffix(tmp_path):
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_set_attr(fxt, request):
     obj = request.getfixturevalue(fxt)
+    obj.set_attr("test", "2")
+    # calling again has no effect
     obj.set_attr("test", "1")
+    # unless you use force
+    obj.set_attr("test", "1", force=True)
     assert obj.get_attr("test") == "1"
     copy = obj.copy()
     assert copy.get_attr("test") == "1"
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_attr_missing(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_attr("missing")
+
+
+def test_set_attr_invalid(h5seq_file):
+    load = (
+        cogent3_h5seqs.load_seqs_data_aligned
+        if h5seq_file.suffix.endswith(cogent3_h5seqs.ALIGNED_SUFFIX)
+        else cogent3_h5seqs.load_seqs_data_unaligned
+    )
+    obj = load(path=h5seq_file, mode="r", check=False)
+    with pytest.raises(PermissionError):
+        obj.set_attr("test", "1")
+
+
+@pytest.mark.parametrize("index", ["s1", 0])
+def test_get_ungapped(small_aligned, index):
+    ungapped = small_aligned[index]
+    assert str(ungapped) == "TGGACGG"
