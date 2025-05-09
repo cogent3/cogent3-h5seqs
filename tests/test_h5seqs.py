@@ -237,20 +237,27 @@ def test_getitem_err(fxt, request):
         obj[20.0]
 
 
-@pytest.mark.parametrize(
-    "cls", [cogent3_h5seqs.AlignedSeqsData, cogent3_h5seqs.UnalignedSeqsData]
-)
-def test_add_seqs_not_writeable(cls, tmp_path, dna_alpha):
-    path = tmp_path / "test.h5seqs"
-    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="w", in_memory=False)
-    h5file.close()
-    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="r", in_memory=False)
-    kwargs = (
-        dict(data=h5file)
-        if cls == cogent3_h5seqs.UnalignedSeqsData
-        else dict(gapped_seqs=h5file)
+@pytest.fixture(params=[cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned])
+def h5seq_file(request, tmp_path, dna_alpha):
+    make = request.param
+    aligned = make == cogent3_h5seqs.make_aligned
+    suffix = (
+        cogent3_h5seqs.ALIGNED_SUFFIX if aligned else cogent3_h5seqs.UNALIGNED_SUFFIX
     )
-    obj = cls(alphabet=dna_alpha, check=False, **kwargs)
+    path = tmp_path / f"test.{suffix}"
+    obj = make(path, mode="w", alphabet=dna_alpha)
+    obj.close()
+    yield path
+    path.unlink(missing_ok=True)
+
+
+def test_add_seqs_not_writeable(h5seq_file):
+    load = (
+        cogent3_h5seqs.load_seqs_data_aligned
+        if h5seq_file.suffix.endswith(cogent3_h5seqs.ALIGNED_SUFFIX)
+        else cogent3_h5seqs.load_seqs_data_unaligned
+    )
+    obj = load(path=h5seq_file, mode="r", check=False)
     with pytest.raises(PermissionError):
         obj.add_seqs({"seq1": "ATGC"})
 
@@ -436,7 +443,7 @@ def test_set_as_default_drivers_unaligned(raw_aligned_data):
 @pytest.mark.parametrize(
     "mk_obj", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
 )
-def test_del_unaligned_aligned(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
+def test_del(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
     # passing a filename without a suffix means it will be cleaned
     # up on object deletion
     outpath = tmp_path / "output"
