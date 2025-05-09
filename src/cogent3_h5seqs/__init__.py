@@ -156,7 +156,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _set_reversed_seqs(self._file, reversed_seqs)
         offset = offset or {}
         _set_offset(self._file, offset=offset)
-
+        self._attr_set = False
         if check:
             self._check_file(self._file)
 
@@ -167,11 +167,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise ValueError(msg)
 
     def _populate_attrs(self) -> None:
+        if self._attr_set:
+            return
         data = self._file
         _assign_attr_if_missing(data, "alphabet", "".join(self._alphabet))
         _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char)
         _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
         _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
+        self._attr_set = True
+
 
     @property
     def writable(self) -> bool:
@@ -212,7 +216,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             if self_attr != other_attr:
                 return False
 
-        # compare individuals sequences
+        # compare individual sequences
         return all(
             numpy.array_equal(
                 self.get_seq_array(seqid=name), other.get_seq_array(seqid=name)
@@ -367,14 +371,17 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
         self._populate_attrs()
 
-        if force_unique_keys and any(name in self.names for name in seqs):
-            msg = "One or more sequence names already exist in collection"
+        group_ref = self._file.get(self._ungapped_grp, {})
+        exists = any(seqid in group_ref for seqid in seqs)
+        if force_unique_keys and exists:
+            msg = f"{exists} already exist in collection"
             raise ValueError(msg)
 
-        names = set() if force_unique_keys else set(self.names)
+        if exists:
+            present = {seqid for seqid in seqs if seqid in group_ref}
+
         for seqid, seq in seqs.items():
-            if seqid in names:
-                # force_unique_keys must be flase, so we ignore
+            if exists and seqid in present:
                 continue
 
             self._file.create_dataset(
@@ -383,8 +390,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 chunks=True,
                 **HDF5_BLOSC2_KWARGS,
             )
-        offset = offset or {}
-        _set_offset(self._file, offset=self.offset | offset)
+        if offset := offset or {}:
+            _set_offset(self._file, offset=self.offset | offset)
         reversed_seqs = reversed_seqs or frozenset()
         _set_reversed_seqs(self._file, reversed_seqs)
 
@@ -975,7 +982,7 @@ def make_unaligned(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
     check: bool = False,
-) -> None:
+) -> UnalignedSeqsData:
     msg = f"make_unaligned not implemented for {type(path)}"
     raise NotImplementedError(msg)
 
