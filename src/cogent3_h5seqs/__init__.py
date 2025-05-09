@@ -555,7 +555,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @classmethod
     def from_file(
-        cls, path: str | pathlib.Path, mode: str = "r"
+        cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> typing_extensions.Self:
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
@@ -564,7 +564,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             missing=h5file.attrs.get("missing_char"),
             moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
         )
-        return cls(data=h5file, alphabet=alphabet)
+        return cls(data=h5file, alphabet=alphabet, check=check)
 
     def _write(self, path: str | pathlib.Path) -> None:
         path = pathlib.Path(path).expanduser().absolute()
@@ -765,7 +765,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     @classmethod
     def from_file(
-        cls, path: str | pathlib.Path, mode: str = "r"
+        cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> typing_extensions.Self:
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
@@ -774,7 +774,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             missing=h5file.attrs.get("missing_char"),
             moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
         )
-        return cls(gapped_seqs=h5file, alphabet=alphabet)
+        return cls(gapped_seqs=h5file, alphabet=alphabet, check=check)
 
     def _make_gaps_and_ungapped(self, seqid: str) -> None:
         if seqid in self._file.get(self._gaps_grp, {}) and seqid in self._file.get(
@@ -1169,7 +1169,7 @@ def make_aligned(
 
 
 def load_seqs_data_unaligned(
-    path: str | pathlib.Path, mode: str = "r"
+    path: str | pathlib.Path, mode: str = "r", check: bool = True
 ) -> UnalignedSeqsData:
     """load hdf5 unaligned sequence data from file"""
     path = pathlib.Path(path)
@@ -1177,11 +1177,11 @@ def load_seqs_data_unaligned(
         msg = f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX!r}"
         raise ValueError(msg)
     klass = UnalignedSeqsData
-    return klass.from_file(path=path, mode=mode)
+    return klass.from_file(path=path, mode=mode, check=check)
 
 
 def load_seqs_data_aligned(
-    path: str | pathlib.Path, mode: str = "r"
+    path: str | pathlib.Path, mode: str = "r", check: bool = True
 ) -> AlignedSeqsData:
     """load hdf5 aligned sequence data from file"""
     path = pathlib.Path(path)
@@ -1190,7 +1190,7 @@ def load_seqs_data_aligned(
         raise ValueError(msg)
     klass = AlignedSeqsData
 
-    return klass.from_file(path=path, mode=mode)
+    return klass.from_file(path=path, mode=mode, check=check)
 
 
 def write_seqs_data(
