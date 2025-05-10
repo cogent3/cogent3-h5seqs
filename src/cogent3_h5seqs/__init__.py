@@ -1194,7 +1194,9 @@ def write_seqs_data(
     seqcoll: SeqsTypes,
     **kwargs,
 ) -> pathlib.Path:
-    if isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)):
+    if hasattr(seqcoll, "storage") and isinstance(
+        seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)
+    ):
         return seqcoll.storage.write(path=path)
 
     path = pathlib.Path(path)
