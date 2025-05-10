@@ -554,6 +554,11 @@ def test_set_attr(fxt, request):
     assert copy.get_attr("test") == "1"
 
 
+def test_set_attr_invalid_type(small_aligned):
+    with pytest.raises(TypeError):
+        small_aligned.set_attr("test", numpy.array("acbgdqwertyuiop", dtype="U<15"))
+
+
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_get_attr_missing(fxt, request):
     obj = request.getfixturevalue(fxt)

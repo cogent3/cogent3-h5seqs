@@ -197,7 +197,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 return
             del self._file.attrs[attr_name]
 
-        self._file.attrs[attr_name] = attr_value
+        try:
+            self._file.attrs[attr_name] = attr_value
+        except TypeError as e:
+            msg = f"Cannot set attribute {attr_name!r} to {attr_value!r} with type {type(attr_value)=}"
+            raise TypeError(msg) from e
 
     def get_attr(self, attr_name: str) -> str:
         """get attr_name from the file"""
