@@ -125,6 +125,12 @@ def test_write(tmp_path, small):
     assert loaded == small
 
 
+def test_close(small):
+    # successive calls should not fail
+    small.close()
+    small.close()
+
+
 def test_write_twice(tmp_path, small):
     path = tmp_path / f"unaligned.{cogent3_h5seqs.UNALIGNED_SUFFIX}"
     small.write(path)
@@ -231,20 +237,27 @@ def test_getitem_err(fxt, request):
         obj[20.0]
 
 
-@pytest.mark.parametrize(
-    "cls", [cogent3_h5seqs.AlignedSeqsData, cogent3_h5seqs.UnalignedSeqsData]
-)
-def test_add_seqs_not_writeable(cls, tmp_path, dna_alpha):
-    path = tmp_path / "test.h5seqs"
-    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="w", in_memory=False)
-    h5file.close()
-    h5file = cogent3_h5seqs.open_h5_file(path=path, mode="r", in_memory=False)
-    kwargs = (
-        dict(data=h5file)
-        if cls == cogent3_h5seqs.UnalignedSeqsData
-        else dict(gapped_seqs=h5file)
+@pytest.fixture(params=[cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned])
+def h5seq_file(request, tmp_path, dna_alpha):
+    make = request.param
+    aligned = make == cogent3_h5seqs.make_aligned
+    suffix = (
+        cogent3_h5seqs.ALIGNED_SUFFIX if aligned else cogent3_h5seqs.UNALIGNED_SUFFIX
     )
-    obj = cls(alphabet=dna_alpha, check=False, **kwargs)
+    path = tmp_path / f"test.{suffix}"
+    obj = make(path, mode="w", alphabet=dna_alpha)
+    obj.close()
+    yield path
+    path.unlink(missing_ok=True)
+
+
+def test_add_seqs_not_writeable(h5seq_file):
+    load = (
+        cogent3_h5seqs.load_seqs_data_aligned
+        if h5seq_file.suffix.endswith(cogent3_h5seqs.ALIGNED_SUFFIX)
+        else cogent3_h5seqs.load_seqs_data_unaligned
+    )
+    obj = load(path=h5seq_file, mode="r", check=False)
     with pytest.raises(PermissionError):
         obj.add_seqs({"seq1": "ATGC"})
 
@@ -339,6 +352,23 @@ def test_from_storage(mk_obj, raw_aligned_data):
     assert got == coll.storage
 
 
+@pytest.mark.parametrize(
+    "mk_obj", [cogent3.make_unaligned_seqs, cogent3.make_aligned_seqs]
+)
+def test_from_storage_invalid(mk_obj, raw_aligned_data):
+    aligned = mk_obj == cogent3.make_aligned_seqs
+    storage_backend = "h5seqs_aligned" if aligned else "h5seqs_unaligned"
+    coll = mk_obj(
+        raw_aligned_data,
+        moltype="dna",
+        new_type=True,
+        storage_backend=storage_backend,
+        in_memory=True,
+    )
+    with pytest.raises(TypeError):
+        coll.storage.from_storage({}, in_memory=False)
+
+
 def test_aligned_from_names_and_array(small_aligned):
     names = small_aligned.names
     data = numpy.array(
@@ -430,7 +460,7 @@ def test_set_as_default_drivers_unaligned(raw_aligned_data):
 @pytest.mark.parametrize(
     "mk_obj", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
 )
-def test_del_unaligned_aligned(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
+def test_del(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
     # passing a filename without a suffix means it will be cleaned
     # up on object deletion
     outpath = tmp_path / "output"
@@ -491,3 +521,40 @@ def test_load_aligned_wrong_suffix(tmp_path):
     # unaligned invalid for aligned
     with pytest.raises(ValueError):
         cogent3.load_aligned_seqs(outpath, moltype="dna", new_type=True)
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_set_attr(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    obj.set_attr("test", "2")
+    # calling again has no effect
+    obj.set_attr("test", "1")
+    # unless you use force
+    obj.set_attr("test", "1", force=True)
+    assert obj.get_attr("test") == "1"
+    copy = obj.copy()
+    assert copy.get_attr("test") == "1"
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_get_attr_missing(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_attr("missing")
+
+
+def test_set_attr_invalid(h5seq_file):
+    load = (
+        cogent3_h5seqs.load_seqs_data_aligned
+        if h5seq_file.suffix.endswith(cogent3_h5seqs.ALIGNED_SUFFIX)
+        else cogent3_h5seqs.load_seqs_data_unaligned
+    )
+    obj = load(path=h5seq_file, mode="r", check=False)
+    with pytest.raises(PermissionError):
+        obj.set_attr("test", "1")
+
+
+@pytest.mark.parametrize("index", ["s1", 0])
+def test_get_ungapped(small_aligned, index):
+    ungapped = small_aligned[index]
+    assert str(ungapped) == "TGGACGG"
