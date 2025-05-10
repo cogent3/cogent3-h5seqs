@@ -84,14 +84,19 @@ def test_unaligned_neq(small):
     assert copy != small
 
 
-def test_unaligned_to_rna(small):
+@pytest.mark.parametrize("fxt", ["small", "small_aligned"])
+def test_dna_to_rna(fxt, request):
+    small = request.getfixturevalue(fxt)
+    # convert to rna
     rna = cogent3.get_moltype("rna", new_type=True).most_degen_alphabet()
     mod = small.to_alphabet(rna)
     assert numpy.allclose(numpy.array(mod["s1"]), numpy.array(small["s1"]))
     assert str(mod["s2"]) == str(small["s2"]).replace("T", "U")
 
 
-def test_unaligned_to_alphabet_text(small):
+@pytest.mark.parametrize("fxt", ["small", "small_aligned"])
+def test_dna_to_text(fxt, request):
+    small = request.getfixturevalue(fxt)
     text = cogent3.get_moltype("text", new_type=True).most_degen_alphabet()
     mod = small.to_alphabet(text)
     # arrays now different
@@ -125,6 +130,15 @@ def test_write(tmp_path, small):
     assert loaded == small
 
 
+@pytest.mark.parametrize("fxt", ["small", "small_aligned"])
+def test_write_invalid_suffix(tmp_path, fxt, request):
+    small = request.getfixturevalue(fxt)
+    # wrong suffix
+    path = tmp_path / "seqs.blah"
+    with pytest.raises(ValueError):
+        small.write(path)
+
+
 def test_close(small):
     # successive calls should not fail
     small.close()
@@ -146,10 +160,14 @@ def test_write_invalid(tmp_path, small):
         small.write(path)
 
 
-def test_load_invalid(tmp_path):
-    path = tmp_path / "unaligned.h5seqs"
+@pytest.mark.parametrize(
+    "func",
+    [cogent3_h5seqs.load_seqs_data_unaligned, cogent3_h5seqs.load_seqs_data_aligned],
+)
+def test_load_invalid(tmp_path, func):
+    path = tmp_path / "wrong-suffix.h5seqs"
     with pytest.raises(ValueError):
-        cogent3_h5seqs.load_seqs_data_unaligned(path)
+        func(path)
 
 
 def test_make_alignedseqsdata(raw_aligned_data, dna_alpha):
@@ -557,4 +575,52 @@ def test_set_attr_invalid(h5seq_file):
 @pytest.mark.parametrize("index", ["s1", 0])
 def test_get_ungapped(small_aligned, index):
     ungapped = small_aligned[index]
-    assert str(ungapped) == "TGGACGG"
+    assert ungapped.str_value == "TGGACGG"
+
+
+@pytest.mark.parametrize("arg", ["start", "stop", "step"])
+def test_get_gapped_seq_invalid_pos(small_aligned, arg):
+    with pytest.raises(ValueError):
+        small_aligned.get_gapped_seq_array(seqid="s1", **{arg: -1})
+
+
+def test_get_gapped_seq_str(small_aligned, raw_aligned_data):
+    got = small_aligned[0]
+    expect = raw_aligned_data["s1"]
+    assert got.gapped_str_value == expect
+    s = small_aligned.get_gapped_seq_str(seqid="s1")
+    assert s == expect
+
+
+def test_get_gapped_seq_bytes(small_aligned, raw_aligned_data):
+    got = small_aligned[0]
+    expect = raw_aligned_data[got.seqid].encode("utf-8")
+    assert got.gapped_bytes_value == expect
+    s = small_aligned.get_gapped_seq_bytes(seqid="s1")
+    assert s == expect
+
+
+def test_get_positions_invalid_name(small_aligned):
+    with pytest.raises(KeyError):
+        small_aligned.get_positions(names=["missing"])
+
+
+@pytest.mark.parametrize("arg", ["start", "stop", "step"])
+def test_get_ungapped_invalid_coord(small_aligned, arg):
+    with pytest.raises(ValueError):
+        small_aligned.get_positions(names=["s1"], **{arg: -1})
+
+
+def test_gadd_seqs_invalid_length(small_aligned):
+    with pytest.raises(ValueError):
+        small_aligned.add_seqs({"s5": "ACGT"})
+
+
+def test_write_seqs_data_invalid_suffix():
+    with pytest.raises(ValueError):
+        cogent3_h5seqs.write_seqs_data(path="wrong-suffix.h5seqs", seqcoll={})
+
+
+def test_write_seqs_data_invalid_coll():
+    with pytest.raises(TypeError):
+        cogent3_h5seqs.write_seqs_data(path="wrong-type.c3h5u", seqcoll={})
