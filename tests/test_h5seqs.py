@@ -629,3 +629,9 @@ def test_write_seqs_data_invalid_suffix():
 def test_write_seqs_data_invalid_coll():
     with pytest.raises(TypeError):
         cogent3_h5seqs.write_seqs_data(path="wrong-type.c3h5u", seqcoll={})
+
+
+def test_open_file_fails(tmp_path):
+    path = tmp_path / "test.h5seqs"
+    with pytest.raises(OSError):
+        cogent3_h5seqs.open_h5_file(path, mode="r", in_memory=False)
