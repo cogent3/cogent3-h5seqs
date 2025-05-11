@@ -554,6 +554,11 @@ def test_set_attr(fxt, request):
     assert copy.get_attr("test") == "1"
 
 
+def test_set_attr_invalid_type(small_aligned):
+    with pytest.raises(TypeError):
+        small_aligned.set_attr("test", numpy.array("acbgdqwertyuiop", dtype="U<15"))
+
+
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_get_attr_missing(fxt, request):
     obj = request.getfixturevalue(fxt)
@@ -624,3 +629,9 @@ def test_write_seqs_data_invalid_suffix():
 def test_write_seqs_data_invalid_coll():
     with pytest.raises(TypeError):
         cogent3_h5seqs.write_seqs_data(path="wrong-type.c3h5u", seqcoll={})
+
+
+def test_open_file_fails(tmp_path):
+    path = tmp_path / "test.h5seqs"
+    with pytest.raises(OSError):
+        cogent3_h5seqs.open_h5_file(path, mode="r", in_memory=False)

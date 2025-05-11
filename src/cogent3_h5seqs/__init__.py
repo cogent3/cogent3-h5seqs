@@ -14,7 +14,7 @@ from cogent3.core import new_sequence as c3_sequence
 from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from cogent3.core.new_alignment import Alignment, SequenceCollection
@@ -67,9 +67,9 @@ def open_h5_file(
     )
     try:
         h5_file: h5py.File = h5py.File(path, mode=mode, **h5_kwargs)
-    except OSError:
-        print(path)
-        raise
+    except OSError as err:
+        msg = f"Error opening HDF5 file {path}: {err}"
+        raise OSError(msg) from err
     return h5_file
 
 
@@ -197,7 +197,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 return
             del self._file.attrs[attr_name]
 
-        self._file.attrs[attr_name] = attr_value
+        try:
+            self._file.attrs[attr_name] = attr_value
+        except TypeError as e:
+            msg = f"Cannot set attribute {attr_name!r} to {attr_value!r} with type {type(attr_value)=}"
+            raise TypeError(msg) from e
 
     def get_attr(self, attr_name: str) -> str:
         """get attr_name from the file"""
@@ -583,7 +587,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise ValueError(msg)
         self._write(path=path)
 
-    def close(self):
+    def close(self) -> None:
         """close the HDF file"""
         if not (self._file and self._file.id):
             return
