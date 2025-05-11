@@ -4,9 +4,9 @@
 
 # cogent3-h5seqs: a HDF5 storage driver for cogent3 sequence collections
 
-`cogent3-h5seqs` is a sequence storage plug-in for [cogent3](https://cogent3.org). It uses HDF5 as the storage format for biological sequences, supporting both unaligned sequence collections and alignments. Storage can be in memory or on disk and, at present, sequences are compressed using the BLOSC2 compression engine.
+`cogent3-h5seqs` is a sequence storage plug-in for [cogent3](https://cogent3.org). It uses HDF5 as the storage format for biological sequences, supporting both unaligned sequence collections and alignments. Storage can be in memory (the default) or on disk and sequences are compressed using the BLOSC2 compression engine.
 
-The advantage of HDF5 is that once primary sequence formats have been converted from text int numpy arrays, loading and manipulating sequence data is fast and very memory efficient.
+The advantage of HDF5 is that once primary sequence formats have been converted from text into numpy arrays, loading and manipulating sequence data is fast and very memory efficient.
 
 > **Note**
 > The storage only works with the new type `cogent3` `Alignment` and `SequenceCollection` types.
