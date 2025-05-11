@@ -67,9 +67,9 @@ def open_h5_file(
     )
     try:
         h5_file: h5py.File = h5py.File(path, mode=mode, **h5_kwargs)
-    except OSError:
-        print(path)
-        raise
+    except OSError as err:
+        msg = f"Error opening HDF5 file {path}: {err}"
+        raise OSError(msg) from err
     return h5_file
 
 
@@ -587,7 +587,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise ValueError(msg)
         self._write(path=path)
 
-    def close(self):
+    def close(self) -> None:
         """close the HDF file"""
         if not (self._file and self._file.id):
             return
