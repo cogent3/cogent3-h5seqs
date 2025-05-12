@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import pathlib
 import typing
 import uuid
@@ -44,6 +45,20 @@ offset_dtype = numpy.dtype(
 # w creates file, truncate if exists
 # a means append, create if not exists
 _writeable_modes = {"r+", "w", "w-", "x", "a"}
+
+
+def array_hash64(data: numpy.ndarray) -> int:
+    """returns 64-bit hash of numpy array.
+
+    Notes
+    -----
+    This function does not introduce randomisation and so
+    is reproducible between processes.
+    """
+    # if this proves a performance bottleneck, we can
+    # switch to using xxhash.hash64()
+    h = hashlib.md5(data.tobytes(), usedforsecurity=False)
+    return int.from_bytes(h.digest()[:8], byteorder="little")
 
 
 def open_h5_file(
@@ -158,6 +173,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         offset = offset or {}
         _set_offset(self._file, offset=offset)
         self._attr_set = False
+        self._hashes = None
         if check:
             self._check_file(self._file)
 
@@ -176,6 +192,20 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
         _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
         self._attr_set = True
+
+    def get_hash(self, seqid: str) -> str | None:
+        """returns 64-bit hash for seqid"""
+        if seqid not in self:
+            return None
+
+        self._hashes = self._hashes or {}
+        if seqid not in self._hashes:
+            # we use the self indexing to get a view, which then returns
+            # the correct array for the storage type (unaligned, aligned)
+            seq = numpy.array(self[seqid])
+            self._hashes[seqid] = array_hash64(seq)
+
+        return self._hashes[seqid]
 
     def set_attr(self, attr_name: str, attr_value: str, force: bool = False) -> None:
         """Set an attribute on the file
@@ -234,26 +264,33 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if not isinstance(other, self.__class__):
             return False
 
-        if self.names != other.names:
+        if set(self.names) != set(other.names):
             return False
 
-        attrs = (
-            "names",
-            "_alphabet",
-            "offset",
-            "reversed_seqs",
-        )
-        for attr_name in attrs:
-            self_attr = getattr(self, attr_name)
-            other_attr = getattr(other, attr_name)
+        # check all meta-data attrs, including
+        # dynamically created by user
+        attrs_self = set(self._file.attrs.keys())
+        attrs_other = set(other._file.attrs.keys())
+        if attrs_self != attrs_other:
+            return False
+
+        for attr_name in attrs_self:
+            self_attr = self._file.attrs[attr_name]
+            other_attr = other._file.attrs[attr_name]
             if self_attr != other_attr:
                 return False
 
-        # compare individual sequences
+        # check the non-sequence groups are the same
+        group_names = ("reversed_seqs", "offset")
+        for field_name in group_names:
+            self_field = getattr(self, field_name)
+            other_field = getattr(other, field_name)
+            if self_field != other_field:
+                return False
+
+        # compare individual sequences via hashes
         return all(
-            numpy.array_equal(
-                self.get_seq_array(seqid=name), other.get_seq_array(seqid=name)
-            )
+            self.get_hash(seqid=name) == other.get_hash(seqid=name)
             for name in self.names
         )
 
@@ -262,6 +299,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         other: typing_extensions.Self,
     ) -> bool:
         return not (self == other)
+
+    def __contains__(self, seqid: str) -> bool:
+        """seqid in self"""
+        group_ref = self._file.get(self._primary_grp, {})
+        return seqid in group_ref
 
     @functools.singledispatchmethod
     def __getitem__(self, index: str | int) -> c3_alignment.SeqDataView:
@@ -628,31 +670,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         if not _valid_h5seqs(file, cls._gapped_grp):
             msg = f"File {file} is not a valid {cls.__name__} file"
             raise ValueError(msg)
-
-    def __eq__(self, other: typing_extensions.Self) -> bool:
-        if not isinstance(other, self.__class__):
-            return False
-        attrs = (
-            "names",
-            "_alphabet",
-            "align_len",
-            "offset",
-            "reversed_seqs",
-        )
-        for attr_name in attrs:
-            self_attr = getattr(self, attr_name)
-            other_attr = getattr(other, attr_name)
-            if self_attr != other_attr:
-                return False
-
-        # compare individuals sequences
-        return all(
-            numpy.array_equal(
-                self.get_gapped_seq_array(seqid=name),
-                other.get_gapped_seq_array(seqid=name),
-            )
-            for name in self.names
-        )
 
     @property
     def names(self) -> tuple[str, ...]:

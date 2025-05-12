@@ -170,6 +170,66 @@ def test_load_invalid(tmp_path, func):
         func(path)
 
 
+@pytest.mark.parametrize(
+    "func",
+    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+)
+def test_equality(raw_aligned_data, dna_alpha, func):
+    store1 = func(None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
+    store2 = func(None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
+    assert store1 == store2
+
+
+@pytest.mark.parametrize(
+    "func",
+    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+)
+def test_inequality(raw_aligned_data, dna_alpha, func):
+    store1 = func(None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
+    # wrong type
+    assert store1 != "string"
+    # seqnames different
+    store2 = func(
+        None,
+        data={k: v for k, v in raw_aligned_data.items() if k != "s1"},
+        in_memory=True,
+        alphabet=dna_alpha,
+    )
+    assert store1 != store2
+    # sequence different
+    data_edited = raw_aligned_data.copy()
+    data_edited["s1"] = data_edited["s1"][:-1] + "N"
+    store2 = func(
+        None,
+        data=data_edited,
+        in_memory=True,
+        alphabet=dna_alpha,
+    )
+    assert store1 != store2
+    # attrs different
+    store2 = func(
+        None,
+        data=raw_aligned_data,
+        in_memory=True,
+        alphabet=dna_alpha,
+    )
+    store2.set_attr("test", "1")
+    assert store1 != store2
+    # attrs different values
+    store1.set_attr("test", "2")
+    assert store1 != store2
+    # fields different
+    store2 = func(
+        None,
+        data=raw_aligned_data,
+        in_memory=True,
+        alphabet=dna_alpha,
+        offset={"s1": 2},
+    )
+    store2.set_attr("test", "2")
+    assert store1 != store2
+
+
 def test_make_alignedseqsdata(raw_aligned_data, dna_alpha):
     asd = cogent3_h5seqs.make_aligned(
         path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
@@ -635,3 +695,25 @@ def test_open_file_fails(tmp_path):
     path = tmp_path / "test.h5seqs"
     with pytest.raises(OSError):
         cogent3_h5seqs.open_h5_file(path, mode="r", in_memory=False)
+
+
+def test_get_hash(raw_aligned_data, dna_alpha):
+    unaligned = cogent3_h5seqs.make_unaligned(
+        "memory", data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
+    )
+    aligned = cogent3_h5seqs.make_aligned(
+        "memory", data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
+    )
+    seqid = "s1"
+    h_u = unaligned.get_hash(seqid)
+    h_a = aligned.get_hash(seqid)
+    assert h_u == h_a
+
+
+@pytest.mark.parametrize("fxt", ["small", "small_aligned"])
+def test_get_hash_missing(fxt, request):
+    small = request.getfixturevalue(fxt)
+    h = small.get_hash(seqid="missing")
+    assert h is None
+
+
