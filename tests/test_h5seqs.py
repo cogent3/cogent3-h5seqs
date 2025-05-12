@@ -309,6 +309,16 @@ def test_check_init(cls, dna_alpha):
 
 
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+def test_getitem_str_int(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    seqid = "s1"
+    index = obj.names.index(seqid)
+    str_got = obj[seqid]
+    int_got = obj[index]
+    assert str(str_got) == str(int_got)
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_getitem_err(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(TypeError):
@@ -618,6 +628,9 @@ def test_set_attr_invalid_type(small_aligned):
     with pytest.raises(TypeError):
         small_aligned.set_attr("test", numpy.array("acbgdqwertyuiop", dtype="U<15"))
 
+    with pytest.raises(TypeError):
+        small_aligned.set_attr("test", {"a": 1, "b": 2})
+
 
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
 def test_get_attr_missing(fxt, request):
@@ -673,7 +686,7 @@ def test_get_positions_invalid_name(small_aligned):
 @pytest.mark.parametrize("arg", ["start", "stop", "step"])
 def test_get_ungapped_invalid_coord(small_aligned, arg):
     with pytest.raises(ValueError):
-        small_aligned.get_positions(names=["s1"], **{arg: -1})
+        small_aligned.get_ungapped(name_map={"s1": "s1"}, **{arg: -1})
 
 
 def test_gadd_seqs_invalid_length(small_aligned):
@@ -717,3 +730,33 @@ def test_get_hash_missing(fxt, request):
     assert h is None
 
 
+@pytest.mark.parametrize(
+    "func",
+    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+)
+def test_invalid_path(func, raw_aligned_data, dna_alpha):
+    with pytest.raises(TypeError):
+        func({}, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
+
+
+@pytest.mark.parametrize(
+    "func",
+    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+)
+def test_invalid_alphabet(func, raw_aligned_data):
+    with pytest.raises(ValueError):
+        func(None, data=raw_aligned_data, in_memory=True, alphabet=None, mode="w")
+
+
+@pytest.mark.parametrize(
+    "func",
+    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+)
+def test_to_alphabet_invalid(func):
+    prot = cogent3.get_moltype("protein", new_type=True).most_degen_alphabet()
+    dna = cogent3.get_moltype("dna", new_type=True).most_degen_alphabet()
+    data = {"Human": "CGTNTHASSL", "Mouse": "CGTDAHASSL", "Rhesus": "CGTNTHASSL"}
+
+    storage = func(None, data=data, in_memory=True, alphabet=prot)
+    with pytest.raises(cogent3.core.new_alphabet.AlphabetError):
+        storage.to_alphabet(dna)

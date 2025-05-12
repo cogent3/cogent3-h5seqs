@@ -66,6 +66,10 @@ def open_h5_file(
     mode: str = "r",
     in_memory: bool = False,
 ) -> h5py.File:
+    if not isinstance(path, (str, pathlib.Path, type(None))):
+        msg = f"Expected path to be str, Path or None, got {type(path).__name__!r}"
+        raise TypeError(msg)
+
     in_memory = in_memory or "memory" in str(path)
     mode = "w-" if in_memory else mode
     # because h5py automatically uses an in-memory file
@@ -1054,7 +1058,7 @@ def make_unaligned(
     check: bool = False,
 ) -> UnalignedSeqsData:
     msg = f"make_unaligned not implemented for {type(path)}"
-    raise NotImplementedError(msg)
+    raise TypeError(msg)
 
 
 @make_unaligned.register
@@ -1150,6 +1154,9 @@ def make_aligned(
     check: bool = False,
 ) -> AlignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
+    if (mode != "r" or in_memory) and alphabet is None:
+        msg = "alphabet must be provided for write mode"
+        raise ValueError(msg)
 
     asd = AlignedSeqsData(
         gapped_seqs=h5file,
