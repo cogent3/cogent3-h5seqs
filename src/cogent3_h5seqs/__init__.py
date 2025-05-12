@@ -1,4 +1,5 @@
 import functools
+import hashlib
 import pathlib
 import typing
 import uuid
@@ -46,11 +47,29 @@ offset_dtype = numpy.dtype(
 _writeable_modes = {"r+", "w", "w-", "x", "a"}
 
 
+def array_hash64(data: numpy.ndarray) -> int:
+    """returns 64-bit hash of numpy array.
+
+    Notes
+    -----
+    This function does not introduce randomisation and so
+    is reproducible between processes.
+    """
+    # if this proves a performance bottleneck, we can
+    # switch to using xxhash.hash64()
+    h = hashlib.md5(data.tobytes(), usedforsecurity=False)
+    return int.from_bytes(h.digest()[:8], byteorder="little")
+
+
 def open_h5_file(
     path: str | pathlib.Path | None = None,
     mode: str = "r",
     in_memory: bool = False,
 ) -> h5py.File:
+    if not isinstance(path, (str, pathlib.Path, type(None))):
+        msg = f"Expected path to be str, Path or None, got {type(path).__name__!r}"
+        raise TypeError(msg)
+
     in_memory = in_memory or "memory" in str(path)
     mode = "w-" if in_memory else mode
     # because h5py automatically uses an in-memory file
@@ -151,12 +170,14 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     ) -> None:
         self._alphabet = alphabet
         self._file = data
+        self._primary_grp = self._ungapped_grp
 
         reversed_seqs = reversed_seqs or frozenset()
         _set_reversed_seqs(self._file, reversed_seqs)
         offset = offset or {}
         _set_offset(self._file, offset=offset)
         self._attr_set = False
+        self._hashes = None
         if check:
             self._check_file(self._file)
 
@@ -175,6 +196,20 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
         _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
         self._attr_set = True
+
+    def get_hash(self, seqid: str) -> str | None:
+        """returns 64-bit hash for seqid"""
+        if seqid not in self:
+            return None
+
+        self._hashes = self._hashes or {}
+        if seqid not in self._hashes:
+            # we use the self indexing to get a view, which then returns
+            # the correct array for the storage type (unaligned, aligned)
+            seq = numpy.array(self[seqid])
+            self._hashes[seqid] = array_hash64(seq)
+
+        return self._hashes[seqid]
 
     def set_attr(self, attr_name: str, attr_value: str, force: bool = False) -> None:
         """Set an attribute on the file
@@ -233,26 +268,33 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if not isinstance(other, self.__class__):
             return False
 
-        if self.names != other.names:
+        if set(self.names) != set(other.names):
             return False
 
-        attrs = (
-            "names",
-            "_alphabet",
-            "offset",
-            "reversed_seqs",
-        )
-        for attr_name in attrs:
-            self_attr = getattr(self, attr_name)
-            other_attr = getattr(other, attr_name)
+        # check all meta-data attrs, including
+        # dynamically created by user
+        attrs_self = set(self._file.attrs.keys())
+        attrs_other = set(other._file.attrs.keys())
+        if attrs_self != attrs_other:
+            return False
+
+        for attr_name in attrs_self:
+            self_attr = self._file.attrs[attr_name]
+            other_attr = other._file.attrs[attr_name]
             if self_attr != other_attr:
                 return False
 
-        # compare individual sequences
+        # check the non-sequence groups are the same
+        group_names = ("reversed_seqs", "offset")
+        for field_name in group_names:
+            self_field = getattr(self, field_name)
+            other_field = getattr(other, field_name)
+            if self_field != other_field:
+                return False
+
+        # compare individual sequences via hashes
         return all(
-            numpy.array_equal(
-                self.get_seq_array(seqid=name), other.get_seq_array(seqid=name)
-            )
+            self.get_hash(seqid=name) == other.get_hash(seqid=name)
             for name in self.names
         )
 
@@ -261,6 +303,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         other: typing_extensions.Self,
     ) -> bool:
         return not (self == other)
+
+    def __contains__(self, seqid: str) -> bool:
+        """seqid in self"""
+        group_ref = self._file.get(self._primary_grp, {})
+        return seqid in group_ref
 
     @functools.singledispatchmethod
     def __getitem__(self, index: str | int) -> c3_alignment.SeqDataView:
@@ -284,7 +331,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def names(self) -> tuple[str, ...]:
-        grp = self._ungapped_grp
+        grp = self._primary_grp
         return tuple(self._file[grp]) if grp in self._file else ()
 
     @property
@@ -419,7 +466,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
         self._populate_attrs()
 
-        group_ref = self._file.get(self._ungapped_grp, {})
+        group_ref = self._file.get(self._primary_grp, {})
         exists = any(seqid in group_ref for seqid in seqs)
         if force_unique_keys and exists:
             msg = f"{exists} already exist in collection"
@@ -433,7 +480,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 continue
 
             self._file.create_dataset(
-                name=f"{self._ungapped_grp}/{seqid}",
+                name=f"{self._primary_grp}/{seqid}",
                 data=self.alphabet.to_indices(seq),
                 chunks=True,
                 **HDF5_BLOSC2_KWARGS,
@@ -620,37 +667,13 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             check=check,
             reversed_seqs=reversed_seqs,
         )
+        self._primary_grp = self._gapped_grp
 
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._gapped_grp):
             msg = f"File {file} is not a valid {cls.__name__} file"
             raise ValueError(msg)
-
-    def __eq__(self, other: typing_extensions.Self) -> bool:
-        if not isinstance(other, self.__class__):
-            return False
-        attrs = (
-            "names",
-            "_alphabet",
-            "align_len",
-            "offset",
-            "reversed_seqs",
-        )
-        for attr_name in attrs:
-            self_attr = getattr(self, attr_name)
-            other_attr = getattr(other, attr_name)
-            if self_attr != other_attr:
-                return False
-
-        # compare individuals sequences
-        return all(
-            numpy.array_equal(
-                self.get_gapped_seq_array(seqid=name),
-                other.get_gapped_seq_array(seqid=name),
-            )
-            for name in self.names
-        )
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -836,7 +859,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             seqid=seqid, start=start, stop=stop, step=step
         ).encode("utf8")
 
-    @functools.singledispatchmethod
     def get_view(
         self,
         seqid: str,
@@ -848,10 +870,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             alphabet=self.alphabet,
             slice_record=slice_record,
         )
-
-    @get_view.register
-    def _(self, seqid: int):
-        return self.get_view(self.names[seqid])
 
     def get_positions(
         self,
@@ -938,36 +956,19 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         offset
             dict of offsets relative to parent for the new sequences.
         """
-        if not self.writable:
-            msg = "Cannot add sequences to a read-only file"
-            raise PermissionError(msg)
+        lengths = {len(seq) for seq in seqs.values()}
 
-        self._populate_attrs()
-
-        if force_unique_keys and any(name in self.names for name in seqs):
-            msg = "One or more sequence names already exist in collection"
+        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+            msg = f"not all lengths equal {lengths=}"
             raise ValueError(msg)
 
-        align_len = self.align_len
-        names = set() if force_unique_keys else set(self.names)
-        for seqid, seq in seqs.items():
-            if align_len and len(seq) != align_len:
-                msg = f"{seqid!r} length {len(seq)} does not equal {align_len=}"
-                raise ValueError(msg)
-            if seqid in names:
-                continue
-
-            self._file.create_dataset(
-                name=f"{self._gapped_grp}/{seqid}",
-                data=self.alphabet.to_indices(seq),
-                chunks=True,
-                **HDF5_BLOSC2_KWARGS,
-            )
-        offset = offset or {}
-        _set_offset(self._file, offset=self.offset | offset)
-        reversed_seqs = reversed_seqs or frozenset()
-        _set_reversed_seqs(self._file, reversed_seqs)
-        return self
+        super().add_seqs(
+            seqs=seqs,
+            force_unique_keys=force_unique_keys,
+            offset=offset,
+            reversed_seqs=reversed_seqs,
+        )
+        return
 
     def copy(
         self,
@@ -1024,9 +1025,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
                     f"Changing from old alphabet={self.alphabet} to new "
                     f"{alphabet=} is not valid for this data"
                 )
-                raise c3_moltype.MolTypeError(
-                    msg,
-                )
+                raise c3_alphabet.AlphabetError(msg)
+
             gapped[name] = as_new_alpha
 
         return self.from_seqs(
@@ -1058,7 +1058,7 @@ def make_unaligned(
     check: bool = False,
 ) -> UnalignedSeqsData:
     msg = f"make_unaligned not implemented for {type(path)}"
-    raise NotImplementedError(msg)
+    raise TypeError(msg)
 
 
 @make_unaligned.register
@@ -1154,6 +1154,9 @@ def make_aligned(
     check: bool = False,
 ) -> AlignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
+    if (mode != "r" or in_memory) and alphabet is None:
+        msg = "alphabet must be provided for write mode"
+        raise ValueError(msg)
 
     asd = AlignedSeqsData(
         gapped_seqs=h5file,

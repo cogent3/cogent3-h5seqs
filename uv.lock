@@ -194,7 +194,7 @@ wheels = [
 
 [[package]]
 name = "cogent3"
-version = "2025.5.8a1"
+version = "2025.5.8a2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chardet" },
@@ -207,14 +207,13 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/a4/3ea7490a802708915b0b309423a525b62e46bc3a13c72354849386814c61/cogent3-2025.5.8a1.tar.gz", hash = "sha256:d7544370bedb021fec935248a744fa7a41616e022ebaffaf6ee7478e1816f882", size = 17989191, upload-time = "2025-05-08T00:37:34.566Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/08/e5a1fcbe149b75f5647ce92ff60c1de3de0050fd1015196f12e438a56501/cogent3-2025.5.8a2.tar.gz", hash = "sha256:5118439badd89b31d81c9c8aec335501a36a64d31df89967266a3d16ec4bab68", size = 17989407, upload-time = "2025-05-08T04:53:26.039Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/5c/142ea1a33df76e305d72b8dc05d8d0f8fa0c33c51a2033af721eb3b36dcc/cogent3-2025.5.8a1-py3-none-any.whl", hash = "sha256:34dae29f15dbbb136a8cc0ba23da15b31956f48770bbb7acd8cc7fee26cfc980", size = 812028, upload-time = "2025-05-08T00:37:31.302Z" },
+    { url = "https://files.pythonhosted.org/packages/09/0c/8a39fe16b045829e68a4677293c24be7332b9e31f236260348b40e54333d/cogent3-2025.5.8a2-py3-none-any.whl", hash = "sha256:bad0cf72225680647819a7366d5b81a9669fcc5228628b16999530af01d78d94", size = 812275, upload-time = "2025-05-08T04:53:24.1Z" },
 ]
 
 [[package]]
 name = "cogent3-h5seqs"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "blosc2", version = "2.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -237,7 +236,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "blosc2" },
-    { name = "cogent3", specifier = ">=2025.5.8a1" },
+    { name = "cogent3", specifier = ">=2025.5.8a2" },
     { name = "h5py", specifier = ">=3.13.0" },
     { name = "hdf5plugin", specifier = ">=5.1.0" },
     { name = "nox", marker = "extra == 'dev'", specifier = ">=2025.2.9" },
