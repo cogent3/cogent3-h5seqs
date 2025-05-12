@@ -1021,9 +1021,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
                     f"Changing from old alphabet={self.alphabet} to new "
                     f"{alphabet=} is not valid for this data"
                 )
-                raise c3_moltype.MolTypeError(
-                    msg,
-                )
+                raise c3_alphabet.AlphabetError(msg)
+
             gapped[name] = as_new_alpha
 
         return self.from_seqs(
