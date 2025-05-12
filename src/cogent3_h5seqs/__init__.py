@@ -855,7 +855,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             seqid=seqid, start=start, stop=stop, step=step
         ).encode("utf8")
 
-    @functools.singledispatchmethod
     def get_view(
         self,
         seqid: str,
@@ -867,10 +866,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             alphabet=self.alphabet,
             slice_record=slice_record,
         )
-
-    @get_view.register
-    def _(self, seqid: int):
-        return self.get_view(self.names[seqid])
 
     def get_positions(
         self,
