@@ -151,6 +151,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     ) -> None:
         self._alphabet = alphabet
         self._file = data
+        self._primary_grp = self._ungapped_grp
 
         reversed_seqs = reversed_seqs or frozenset()
         _set_reversed_seqs(self._file, reversed_seqs)
@@ -284,7 +285,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def names(self) -> tuple[str, ...]:
-        grp = self._ungapped_grp
+        grp = self._primary_grp
         return tuple(self._file[grp]) if grp in self._file else ()
 
     @property
@@ -419,7 +420,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
         self._populate_attrs()
 
-        group_ref = self._file.get(self._ungapped_grp, {})
+        group_ref = self._file.get(self._primary_grp, {})
         exists = any(seqid in group_ref for seqid in seqs)
         if force_unique_keys and exists:
             msg = f"{exists} already exist in collection"
@@ -433,7 +434,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 continue
 
             self._file.create_dataset(
-                name=f"{self._ungapped_grp}/{seqid}",
+                name=f"{self._primary_grp}/{seqid}",
                 data=self.alphabet.to_indices(seq),
                 chunks=True,
                 **HDF5_BLOSC2_KWARGS,
@@ -620,6 +621,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             check=check,
             reversed_seqs=reversed_seqs,
         )
+        self._primary_grp = self._gapped_grp
 
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
@@ -938,36 +940,19 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         offset
             dict of offsets relative to parent for the new sequences.
         """
-        if not self.writable:
-            msg = "Cannot add sequences to a read-only file"
-            raise PermissionError(msg)
+        lengths = {len(seq) for seq in seqs.values()}
 
-        self._populate_attrs()
-
-        if force_unique_keys and any(name in self.names for name in seqs):
-            msg = "One or more sequence names already exist in collection"
+        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+            msg = f"not all lengths equal {lengths=}"
             raise ValueError(msg)
 
-        align_len = self.align_len
-        names = set() if force_unique_keys else set(self.names)
-        for seqid, seq in seqs.items():
-            if align_len and len(seq) != align_len:
-                msg = f"{seqid!r} length {len(seq)} does not equal {align_len=}"
-                raise ValueError(msg)
-            if seqid in names:
-                continue
-
-            self._file.create_dataset(
-                name=f"{self._gapped_grp}/{seqid}",
-                data=self.alphabet.to_indices(seq),
-                chunks=True,
-                **HDF5_BLOSC2_KWARGS,
-            )
-        offset = offset or {}
-        _set_offset(self._file, offset=self.offset | offset)
-        reversed_seqs = reversed_seqs or frozenset()
-        _set_reversed_seqs(self._file, reversed_seqs)
-        return self
+        super().add_seqs(
+            seqs=seqs,
+            force_unique_keys=force_unique_keys,
+            offset=offset,
+            reversed_seqs=reversed_seqs,
+        )
+        return
 
     def copy(
         self,
