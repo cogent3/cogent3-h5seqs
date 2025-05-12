@@ -10,9 +10,7 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "blosc2",
-    # following needs to be replaced by cogent3>=version when
-    # cogent3 AlignedView API changes are released
-    "cogent3 @ git+https://github.com/cogent3/cogent3.git@develop",
+    "cogent3>=2025.5.8a3",
     "h5py>=3.13.0",
     "hdf5plugin>=5.1.0",
     "numpy>=2.2.4",
