@@ -1201,11 +1201,6 @@ def write_seqs_data(
     seqcoll: SeqsTypes,
     **kwargs,
 ) -> pathlib.Path:
-    if hasattr(seqcoll, "storage") and isinstance(
-        seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)
-    ):
-        return seqcoll.storage.write(path=path)
-
     path = pathlib.Path(path)
     supported_suffixes = {
         ALIGNED_SUFFIX: c3_alignment.Alignment,

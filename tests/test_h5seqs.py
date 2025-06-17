@@ -760,3 +760,61 @@ def test_to_alphabet_invalid(func):
     storage = func(None, data=data, in_memory=True, alphabet=prot)
     with pytest.raises(cogent3.core.new_alphabet.AlphabetError):
         storage.to_alphabet(dna)
+
+
+def subset_seqcoll_default(make_func, rename):
+    data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
+    coll = make_func(
+        data,
+        moltype="dna",
+        new_type=True,
+        info={"aligned": make_func == cogent3.make_aligned_seqs},
+    )
+    names = ["S1", "S3"] if rename else ["s1", "s3"]
+    if rename:
+        coll = coll.rename_seqs(lambda x: x.upper())
+        names = ["S1", "S3"]
+    return coll.take_seqs(names)
+
+
+def subset_seqcoll_h5(make_func, rename):
+    data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
+    storage_backend = (
+        "h5seqs_aligned"
+        if make_func == cogent3.make_aligned_seqs
+        else "h5seqs_unaligned"
+    )
+    coll = make_func(
+        data,
+        moltype="dna",
+        new_type=True,
+        info={"aligned": make_func == cogent3.make_aligned_seqs},
+        storage_backend=storage_backend,
+    )
+    names = ["S1", "S3"] if rename else ["s1", "s3"]
+    if rename:
+        coll = coll.rename_seqs(lambda x: x.upper())
+        names = ["S1", "S3"]
+    return coll.take_seqs(names)
+
+
+@pytest.mark.parametrize("storage_func", [subset_seqcoll_h5, subset_seqcoll_default])
+@pytest.mark.parametrize(
+    "make_func", [cogent3.make_aligned_seqs, cogent3.make_unaligned_seqs]
+)
+@pytest.mark.parametrize("rename", [True, False])
+def test_write_subsets(storage_func, make_func, rename, tmp_path):
+    subset = storage_func(make_func, rename=rename)
+    aligned = subset.info["aligned"]
+    suffix = (
+        cogent3_h5seqs.ALIGNED_SUFFIX if aligned else cogent3_h5seqs.UNALIGNED_SUFFIX
+    )
+    outpath = tmp_path / f"subset_output.{suffix}"
+    subset.write(outpath)
+    load_func = cogent3.load_aligned_seqs if aligned else cogent3.load_unaligned_seqs
+    got = load_func(outpath, moltype="dna", new_type=True)
+    assert got.to_dict() == subset.to_dict()
+    cls = (
+        cogent3_h5seqs.AlignedSeqsData if aligned else cogent3_h5seqs.UnalignedSeqsData
+    )
+    assert isinstance(got.storage, cls)
