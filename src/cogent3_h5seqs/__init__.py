@@ -1238,7 +1238,7 @@ def write_seqs_data(
 
 class H5SeqsUnalignedParser(SequenceParserBase):
     @property
-    def name(self) -> tuple[str, ...]:
+    def name(self) -> str:
         return "c3h5u"
 
     @property
@@ -1268,7 +1268,7 @@ class H5SeqsUnalignedParser(SequenceParserBase):
 
 class H5SeqsAlignedParser(SequenceParserBase):
     @property
-    def name(self) -> tuple[str, ...]:
+    def name(self) -> str:
         return "c3h5a"
 
     @property
@@ -1298,7 +1298,7 @@ class H5SeqsAlignedParser(SequenceParserBase):
 
 class H5UnalignedSeqsWriter(SequenceWriterBase):
     @property
-    def name(self) -> tuple[str, ...]:
+    def name(self) -> str:
         return "c3h5u"
 
     @property
@@ -1333,7 +1333,7 @@ class H5UnalignedSeqsWriter(SequenceWriterBase):
 
 class H5AlignedSeqsWriter(H5UnalignedSeqsWriter):
     @property
-    def name(self) -> tuple[str, ...]:
+    def name(self) -> str:
         return "c3h5a"
 
     @property
