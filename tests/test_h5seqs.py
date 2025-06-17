@@ -833,3 +833,35 @@ def test_write_subsets(storage_func, make_func, rename, tmp_path):
         cogent3_h5seqs.AlignedSeqsData if aligned else cogent3_h5seqs.UnalignedSeqsData
     )
     assert isinstance(got.storage, cls)
+
+
+@pytest.mark.parametrize(
+    "make_func", [cogent3.make_aligned_seqs, cogent3.make_unaligned_seqs]
+)
+def test_write_custom_suffix(tmp_path, make_func):
+    seqcoll = subset_seqcoll_default(make_func, rename=False)
+    aligned = make_func == cogent3.make_aligned_seqs
+    suffix = "aligned" if aligned else "unaligned"
+    kwargs = {"aligned_suffix": suffix} if aligned else {"unaligned_suffix": suffix}
+    outpath = tmp_path / f"custom_suffix_output.{suffix}"
+    cogent3_h5seqs.write_seqs_data(path=outpath, seqcoll=seqcoll, **kwargs)
+    assert outpath.exists()
+
+
+@pytest.mark.parametrize(
+    "make_func", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
+)
+def test_make_custom_suffix(make_func, dna_alpha):
+    aligned = make_func == cogent3_h5seqs.make_aligned
+    suffix = "aligned" if aligned else "unaligned"
+    obj = make_func("memory", mode="w", suffix=suffix, alphabet=dna_alpha)
+    assert obj.filename_suffix == suffix
+
+
+@pytest.mark.parametrize(
+    "make_func", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
+)
+def test_repr(raw_aligned_data, dna_alpha, make_func):
+    obj = make_func("memory", data=raw_aligned_data, mode="w", alphabet=dna_alpha)
+    part = f"alphabet='{''.join(dna_alpha)}'"
+    assert part in repr(obj)
