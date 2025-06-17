@@ -158,6 +158,7 @@ def duplicate_h5_file(
 
 class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     _ungapped_grp: str = "ungapped"
+    _suffix: str = UNALIGNED_SUFFIX
 
     def __init__(
         self,
@@ -207,6 +208,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
         _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
         self._attr_set = True
+
+    @property
+    def filename_suffix(self) -> str:
+        """suffix for the files"""
+        return self._suffix
+
+    @filename_suffix.setter
+    def filename_suffix(self, value: str) -> None:
+        """setter for the file name suffix"""
+        self._suffix = value.removeprefix(".")
 
     def get_hash(self, seqid: str) -> str | None:
         """returns 64-bit hash for seqid"""
@@ -274,7 +285,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def __eq__(
         self,
-        other: typing_extensions.Self,
+        other: object,
     ) -> bool:
         if not isinstance(other, self.__class__):
             return False
@@ -640,8 +651,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def write(self, path: str | pathlib.Path) -> None:
         """Write the UnalignedSeqsData object to a file"""
         path = pathlib.Path(path).expanduser().absolute()
-        if path.suffix != f".{UNALIGNED_SUFFIX}":
-            msg = f"path {path} does not have the expected suffix '.{UNALIGNED_SUFFIX}'"
+        if path.suffix != f".{self.filename_suffix}":
+            msg = f"path {path} does not have the expected suffix '.{self.filename_suffix}'"
             raise ValueError(msg)
         self._write(path=path)
 
@@ -660,6 +671,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     _gapped_grp: str = "gapped"
     _ungapped_grp: str = "ungapped"
     _gaps_grp: str = "gaps"
+    _suffix: str = ALIGNED_SUFFIX
 
     def __init__(
         self,
@@ -1050,8 +1062,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def write(self, path: str | pathlib.Path) -> None:
         """Write the UnalignedSeqsData object to a file"""
-        if path.suffix != f".{ALIGNED_SUFFIX}":
-            msg = f"path {path} does not have the expected suffix '.{ALIGNED_SUFFIX}'"
+        if path.suffix != f".{self.filename_suffix}":
+            msg = f"path {path} does not have the expected suffix '.{self.filename_suffix}'"
             raise ValueError(msg)
         self._write(path=path)
 
@@ -1067,6 +1079,7 @@ def make_unaligned(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
     check: bool = False,
+    suffix: str = UNALIGNED_SUFFIX,
 ) -> UnalignedSeqsData:
     msg = f"make_unaligned not implemented for {type(path)}"
     raise TypeError(msg)
@@ -1083,6 +1096,7 @@ def _(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
     check: bool = False,
+    suffix: str = UNALIGNED_SUFFIX,
 ) -> UnalignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
@@ -1106,6 +1120,7 @@ def _(
         reversed_seqs=reversed_seqs,
         check=check,
     )
+    useqs.filename_suffix = suffix
     if data is not None:
         _ = useqs.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
     return useqs
@@ -1122,6 +1137,7 @@ def _(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
     check: bool = False,
+    suffix: str = UNALIGNED_SUFFIX,
 ) -> UnalignedSeqsData:
     return make_unaligned(
         str(path.expanduser()),
@@ -1132,6 +1148,7 @@ def _(
         offset=offset,
         reversed_seqs=reversed_seqs,
         check=check,
+        suffix=suffix,
     )
 
 
@@ -1146,6 +1163,7 @@ def _(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
     check: bool = False,
+    suffix: str = UNALIGNED_SUFFIX,
 ) -> UnalignedSeqsData:
     # create a writeable in memory record
     mode = "w"
@@ -1159,6 +1177,7 @@ def _(
         offset=offset,
         reversed_seqs=reversed_seqs,
         check=check,
+        suffix=suffix,
     )
 
 
@@ -1172,6 +1191,7 @@ def make_aligned(
     offset: dict[str, int] | None = None,
     reversed_seqs: frozenset[str] | None = None,
     check: bool = False,
+    suffix: str = ALIGNED_SUFFIX,
 ) -> AlignedSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
@@ -1181,9 +1201,9 @@ def make_aligned(
     if alphabet is None:
         mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
         alphabet = c3_alphabet.make_alphabet(
-            chars=h5file.attrs.get("alphabet"),
-            gap=h5file.attrs.get("gap_char"),
-            missing=h5file.attrs.get("missing_char"),
+            chars=h5file.attrs["alphabet"],
+            gap=h5file.attrs["gap_char"],
+            missing=h5file.attrs["missing_char"],
             moltype=mt,
         )
     check = h5file.mode == "r" if check is None else check
@@ -1194,46 +1214,59 @@ def make_aligned(
         offset=offset,
         reversed_seqs=reversed_seqs,
     )
+    asd.filename_suffix = suffix
     if data is not None:
         _ = asd.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
     return asd
 
 
 def load_seqs_data_unaligned(
-    path: str | pathlib.Path, mode: str = "r", check: bool = True
+    path: str | pathlib.Path,
+    mode: str = "r",
+    check: bool = True,
+    suffix: str = UNALIGNED_SUFFIX,
 ) -> UnalignedSeqsData:
     """load hdf5 unaligned sequence data from file"""
     path = pathlib.Path(path)
-    if path.suffix != f".{UNALIGNED_SUFFIX}":
-        msg = f"File {path} does not have an expected suffix {UNALIGNED_SUFFIX!r}"
+    if path.suffix != f".{suffix}":
+        msg = f"File {path} does not have an expected suffix {suffix!r}"
         raise ValueError(msg)
     klass = UnalignedSeqsData
-    return klass.from_file(path=path, mode=mode, check=check)
+    result = klass.from_file(path=path, mode=mode, check=check)
+    result.filename_suffix = suffix
+    return result
 
 
 def load_seqs_data_aligned(
-    path: str | pathlib.Path, mode: str = "r", check: bool = True
+    path: str | pathlib.Path,
+    mode: str = "r",
+    check: bool = True,
+    suffix: str = ALIGNED_SUFFIX,
 ) -> AlignedSeqsData:
     """load hdf5 aligned sequence data from file"""
     path = pathlib.Path(path)
-    if path.suffix != f".{ALIGNED_SUFFIX}":
-        msg = f"File {path} does not have an expected suffix {ALIGNED_SUFFIX!r}"
+    if path.suffix != f".{suffix}":
+        msg = f"File {path} does not have an expected suffix {suffix!r}"
         raise ValueError(msg)
     klass = AlignedSeqsData
 
-    return klass.from_file(path=path, mode=mode, check=check)
+    result = klass.from_file(path=path, mode=mode, check=check)
+    result.filename_suffix = suffix
+    return result
 
 
 def write_seqs_data(
     *,
     path: pathlib.Path,
     seqcoll: SeqsTypes,
+    unaligned_suffix: str = UNALIGNED_SUFFIX,
+    aligned_suffix: str = ALIGNED_SUFFIX,
     **kwargs,
 ) -> pathlib.Path:
     path = pathlib.Path(path)
     supported_suffixes = {
-        ALIGNED_SUFFIX: c3_alignment.Alignment,
-        UNALIGNED_SUFFIX: c3_alignment.SequenceCollection,
+        aligned_suffix: c3_alignment.Alignment,
+        unaligned_suffix: c3_alignment.SequenceCollection,
     }
     suffix = path.suffix[1:]
     if suffix not in supported_suffixes:
@@ -1244,7 +1277,7 @@ def write_seqs_data(
         msg = f"{suffix=} invalid for {type(seqcoll).__name__!r}"
         raise TypeError(msg)
 
-    cls = UnalignedSeqsData if suffix == UNALIGNED_SUFFIX else AlignedSeqsData
+    cls = UnalignedSeqsData if suffix == unaligned_suffix else AlignedSeqsData
     alphabet = seqcoll.storage.alphabet
     data = {s.name: numpy.array(s) for s in seqcoll.seqs}
     offset = seqcoll.storage.offset
@@ -1256,6 +1289,7 @@ def write_seqs_data(
         "reversed_seqs": reversed_seqs,
     } | kwargs
     store = cls.from_seqs(**kwargs)
+    store.filename_suffix = suffix
     store.write(path=path)
     return path
 
