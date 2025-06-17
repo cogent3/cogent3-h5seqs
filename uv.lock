@@ -194,7 +194,7 @@ wheels = [
 
 [[package]]
 name = "cogent3"
-version = "2025.5.8a2"
+version = "2025.5.8a8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chardet" },
@@ -207,9 +207,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/53/08/e5a1fcbe149b75f5647ce92ff60c1de3de0050fd1015196f12e438a56501/cogent3-2025.5.8a2.tar.gz", hash = "sha256:5118439badd89b31d81c9c8aec335501a36a64d31df89967266a3d16ec4bab68", size = 17989407, upload-time = "2025-05-08T04:53:26.039Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/ec/29b3203297171f321ed5b6d8d5a21e107b9d6aad510a67614328ee0d6ffd/cogent3-2025.5.8a8.tar.gz", hash = "sha256:f4d7cc084d4651750325810d7b8f193275fdbc4209cd614ac2544fcb35f7aaaa", size = 17996188, upload-time = "2025-06-16T06:31:03.692Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/0c/8a39fe16b045829e68a4677293c24be7332b9e31f236260348b40e54333d/cogent3-2025.5.8a2-py3-none-any.whl", hash = "sha256:bad0cf72225680647819a7366d5b81a9669fcc5228628b16999530af01d78d94", size = 812275, upload-time = "2025-05-08T04:53:24.1Z" },
+    { url = "https://files.pythonhosted.org/packages/31/af/10f3f3b41a0d2de12154fd1bf0bfdce6316a1b9ba043f31f44688487006a/cogent3-2025.5.8a8-py3-none-any.whl", hash = "sha256:f8a0767b133c0116bbc70a718cae19d8888879068a280d61aa333f2c4ca2f65b", size = 817770, upload-time = "2025-06-16T06:31:01.738Z" },
 ]
 
 [[package]]
@@ -236,7 +236,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "blosc2" },
-    { name = "cogent3", specifier = ">=2025.5.8a2" },
+    { name = "cogent3", specifier = ">=2025.5.8a3" },
     { name = "h5py", specifier = ">=3.13.0" },
     { name = "hdf5plugin", specifier = ">=5.1.0" },
     { name = "nox", marker = "extra == 'dev'", specifier = ">=2025.2.9" },
