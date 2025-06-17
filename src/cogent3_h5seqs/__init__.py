@@ -181,6 +181,17 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if check:
             self._check_file(self._file)
 
+    def __repr__(self) -> str:
+        name = self.__class__.__name__
+        path = pathlib.Path(self._file.filename)
+        attr_vals = [f"'{path.name}'"]
+        attr_vals.extend(
+            f"{attr}={self._file.attrs[attr]!r}" for attr in self._file.attrs
+        )
+        num_groups = len(self._file.get(self._primary_grp, {}))
+        parts = ", ".join(attr_vals)
+        return f"{name}({parts}, num_seqs={num_groups})"
+
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._ungapped_grp):
