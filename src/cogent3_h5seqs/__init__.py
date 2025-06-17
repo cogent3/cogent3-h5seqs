@@ -979,7 +979,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             offset=offset,
             reversed_seqs=reversed_seqs,
         )
-        return
+        return self
 
     def copy(
         self,
@@ -1089,16 +1089,25 @@ def _(
         msg = "alphabet must be provided for write mode"
         raise ValueError(msg)
 
-    mode = "w" if in_memory else mode
+    if alphabet is None:
+        mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
+        alphabet = c3_alphabet.make_alphabet(
+            chars=h5file.attrs.get("alphabet"),
+            gap=h5file.attrs.get("gap_char"),
+            missing=h5file.attrs.get("missing_char"),
+            moltype=mt,
+        )
+    check = h5file.mode == "r" if check is None else check
+
     useqs = UnalignedSeqsData(
         data=h5file,
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
-        check=check or mode == "r",
+        check=check,
     )
     if data is not None:
-        data = useqs.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
+        _ = useqs.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
     return useqs
 
 
@@ -1169,15 +1178,24 @@ def make_aligned(
         msg = "alphabet must be provided for write mode"
         raise ValueError(msg)
 
+    if alphabet is None:
+        mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
+        alphabet = c3_alphabet.make_alphabet(
+            chars=h5file.attrs.get("alphabet"),
+            gap=h5file.attrs.get("gap_char"),
+            missing=h5file.attrs.get("missing_char"),
+            moltype=mt,
+        )
+    check = h5file.mode == "r" if check is None else check
     asd = AlignedSeqsData(
         gapped_seqs=h5file,
-        check=check or h5file.mode == "r",
+        check=check,
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
     )
     if data is not None:
-        data = asd.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
+        _ = asd.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
     return asd
 
 

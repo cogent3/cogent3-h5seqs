@@ -29,6 +29,21 @@ def small(raw_data, dna_alpha):
     )
 
 
+@pytest.mark.parametrize(
+    "mk_obj", [cogent3_h5seqs.make_unaligned, cogent3_h5seqs.make_aligned]
+)
+def test_make_from_empty(dna_alpha, mk_obj, tmp_path):
+    store_path = (
+        tmp_path
+        / f"empty.{cogent3_h5seqs.ALIGNED_SUFFIX if mk_obj == cogent3_h5seqs.make_aligned else cogent3_h5seqs.UNALIGNED_SUFFIX}"
+    )
+    init = mk_obj(store_path, alphabet=dna_alpha, mode="w")
+    init.close()  # this forces attributes to be written
+    got = mk_obj(store_path, mode="r", check=False)
+    assert got.get_attr("moltype") == "dna"
+    assert got.alphabet == dna_alpha
+
+
 @pytest.mark.parametrize("offset", [None, {"s1": 2}])
 def test_make_unaligned(raw_data, offset, dna_alpha):
     offset_expect = dict.fromkeys(raw_data, 0) | (offset or {})
