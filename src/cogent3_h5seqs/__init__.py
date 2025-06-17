@@ -130,8 +130,9 @@ def _set_offset(h5file: h5py.File, offset: dict[str, int] | None) -> None:
     if not offset or h5file.mode not in _writeable_modes:
         return
 
+    # only create an offset if there's something to store
     data = numpy.array(
-        [(k.encode("utf8"), v) for k, v in offset.items()], dtype=offset_dtype
+        [(k.encode("utf8"), v) for k, v in offset.items() if v], dtype=offset_dtype
     )
     _set_group(h5file, "offset", data)
 
@@ -149,8 +150,16 @@ def duplicate_h5_file(
     *, h5file: h5py.File, path: str | pathlib.Path, in_memory: bool
 ) -> h5py.File:
     result = open_h5_file(path=path, mode="w", in_memory=in_memory)
-    for grp in h5file:
-        h5file.copy(grp, result)
+    for name in h5file:
+        data = h5file[name]
+        if isinstance(data, h5py.Group):
+            h5file.copy(name, result, name=name)
+        else:
+            # have to do this explicitly, or we get a segfault
+            result.create_dataset(
+                name=name, data=data[:], dtype=data.dtype, **HDF5_BLOSC2_KWARGS
+            )
+
     for attr in h5file.attrs:
         result.attrs[attr] = h5file.attrs[attr]
     return result
