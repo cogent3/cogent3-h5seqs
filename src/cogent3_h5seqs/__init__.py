@@ -15,7 +15,7 @@ from cogent3.core import new_sequence as c3_sequence
 from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from cogent3.core.new_alignment import Alignment, SequenceCollection
