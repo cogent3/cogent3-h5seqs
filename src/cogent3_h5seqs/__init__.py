@@ -8,17 +8,17 @@ import h5py
 import hdf5plugin
 import numpy
 import typing_extensions
-from cogent3.core import new_alignment as c3_alignment
-from cogent3.core import new_alphabet as c3_alphabet
-from cogent3.core import new_moltype as c3_moltype
-from cogent3.core import new_sequence as c3_sequence
+from cogent3.core import alignment as c3_alignment
+from cogent3.core import alphabet as c3_alphabet
+from cogent3.core import moltype as c3_moltype
+from cogent3.core import sequence as c3_sequence
 from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 if typing.TYPE_CHECKING:  # pragma: no cover
-    from cogent3.core.new_alignment import Alignment, SequenceCollection
+    from cogent3.core.alignment import Alignment, SequenceCollection
 
 
 UNALIGNED_SUFFIX = "c3h5u"
@@ -616,7 +616,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     ) -> typing_extensions.Self:
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
         if type(seqcoll) is not c3_alignment.SequenceCollection:
-            msg = f"Expected seqcoll to be an instance of new_type SequenceCollection, got {type(seqcoll).__name__!r}"
+            msg = f"Expected seqcoll to be an instance of SequenceCollection, got {type(seqcoll).__name__!r}"
             raise TypeError(msg)
 
         in_memory = kwargs.pop("in_memory", False)
@@ -803,7 +803,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     ) -> typing_extensions.Self:
         """convert a cogent3 AlignedSeqsDataABC into AlignedSeqsData"""
         if type(seqcoll) is not c3_alignment.Alignment:
-            msg = f"Expected seqcoll to be an instance of new_type Alignment, got {type(seqcoll).__name__!r}"
+            msg = f"Expected seqcoll to be an instance of Alignment, got {type(seqcoll).__name__!r}"
             raise TypeError(msg)
 
         in_memory = kwargs.pop("in_memory", False)

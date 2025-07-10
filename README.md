@@ -45,7 +45,6 @@ You don't have to specify the storage as the default for all instances, but can 
 ```python
 coll = cogent3.load_unaligned_seqs(some_path,
                                    moltype="dna",
-                                   new_type=True,
                                    storage_backend="h5seqs_unaligned")
 ```
 
@@ -54,7 +53,6 @@ or, for alignments.
 ```python
 aln = cogent3.load_aligned_seqs(some_path,
                                    moltype="dna",
-                                   new_type=True,
                                    storage_backend="h5seqs_aligned")
 ```
 
@@ -86,7 +84,7 @@ sample_coll.write(outpath)  # writes out as cogent3-h5seqs HDF5 storage
 
 ```python
 inpath = "~/Desktop/alignment_output.c3h5u"
-sample_coll = cogent3.load_unaligned_seqs(inpath, moltype="dna", new_type=True)
+sample_coll = cogent3.load_unaligned_seqs(inpath, moltype="dna")
 ```
 
 > **Note**
