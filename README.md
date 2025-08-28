@@ -8,8 +8,7 @@
 
 The advantage of HDF5 is that once primary sequence formats have been converted from text into numpy arrays, loading and manipulating sequence data is fast and very memory efficient.
 
-> **Note**
-> The storage only works with the new type `cogent3` `Alignment` and `SequenceCollection` types.
+Sequences are stored under the hexdigest of their `xxhash.hash64()`. This duplicated sequences are stored only once, and we also store the mapping of sequence names to the hexdigest.
 
 ## Installation
 
