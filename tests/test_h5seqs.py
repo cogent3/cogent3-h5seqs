@@ -860,3 +860,21 @@ def test_repr(raw_aligned_data, dna_alpha, make_func):
     obj = make_func("memory", data=raw_aligned_data, mode="w", alphabet=dna_alpha)
     part = f"alphabet='{''.join(dna_alpha)}'"
     assert part in repr(obj)
+
+
+def test_set_name_to_hash_no_data():
+    h5file = cogent3_h5seqs.open_h5_file("memory", mode="w")
+    # this should not fail
+    cogent3_h5seqs._set_name_to_hash(h5file=h5file, name_to_hash=None)  # noqa: SLF001
+
+
+def test_set_name_to_hash_read_only(tmp_path):
+    h5path = tmp_path / "test.h5"
+    h5file = cogent3_h5seqs.open_h5_file(h5path, mode="w")
+    h5file.close()
+    # now read only
+    h5file = cogent3_h5seqs.open_h5_file(h5path, mode="r")
+    # this should not fail
+    cogent3_h5seqs._set_name_to_hash(
+        h5file=h5file, name_to_hash={"s1": "not really a hash"}
+    )  # noqa: SLF001

@@ -218,7 +218,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         offset = offset or {}
         _set_offset(self._file, offset=offset)
         self._attr_set: bool = False
-        self._name_to_seqhash: dict[str, str] = {}
+        self._name_to_hash: dict[str, str] = {}
         if check:
             self._check_file(self._file)
 
@@ -262,12 +262,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def get_hash(self, seqid: str) -> str | None:
         """returns xxhash 64-bit hash for seqid"""
         if seqid not in self:
+            # the contains method triggers loading of name_to_seqhash
             return None
-
-        if not self._name_to_seqhash:
-            self._name_to_seqhash = _get_name_to_hash_dict(self._file)
-
-        return self._name_to_seqhash[seqid]
+        return self._name_to_hash.get(seqid)
 
     def set_attr(self, attr_name: str, attr_value: str, force: bool = False) -> None:
         """Set an attribute on the file
@@ -363,9 +360,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def __contains__(self, seqid: str) -> bool:
         """seqid in self"""
-        if not self._name_to_seqhash:
-            self._name_to_seqhash = _get_name_to_hash_dict(self._file)
-        return seqid in self._name_to_seqhash
+        if not self._name_to_hash:
+            self._name_to_hash = _get_name_to_hash_dict(self._file)
+        return seqid in self._name_to_hash
 
     @functools.singledispatchmethod
     def __getitem__(self, index: str | int) -> c3_alignment.SeqDataView:
@@ -997,7 +994,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             dtype=self.alphabet.dtype,
         )
         names = tuple(name_map.values())
-        name_to_hash = self._name_to_seqhash
+        name_to_hash = self._name_to_hash
         for i, name in enumerate(names):
             seqhash = name_to_hash[name]
             seq_array[i] = self._file[f"{self._gapped_grp}/{seqhash}"][:]
