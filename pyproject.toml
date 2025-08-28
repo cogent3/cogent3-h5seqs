@@ -15,6 +15,7 @@ dependencies = [
     "hdf5plugin>=5.1.0",
     "numpy>=2.2.4",
     "typing-extensions>=4.13.2",
+    "xxhash",
 ]
 keywords = ["biology", "genomics", "statistics", "phylogeny", "evolution", "bioinformatics"]
 
