@@ -877,4 +877,4 @@ def test_set_name_to_hash_read_only(tmp_path):
     # this should not fail
     cogent3_h5seqs._set_name_to_hash(
         h5file=h5file, name_to_hash={"s1": "not really a hash"}
-    )  # noqa: SLF001
+    )
