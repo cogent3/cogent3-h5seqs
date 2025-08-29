@@ -313,7 +313,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if attr_name not in self._file.attrs:
             msg = f"attribute {attr_name!r} not found"
             raise KeyError(msg)
-        return self._file.attrs[attr_name]
+        return typing.cast("str", self._file.attrs[attr_name])
 
     @property
     def writable(self) -> bool:
@@ -409,7 +409,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         all_offsets = dict.fromkeys(self.names, 0)
         if "offset" not in self._file:
             return all_offsets
-        data = self._file["offset"][:]  # TODO add a cast()
+        data = typing.cast("numpy.ndarray", self._file["offset"])[:]
 
         return all_offsets | {k.decode("utf8"): int(v) for k, v in data}
 
@@ -418,7 +418,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if "reversed_seqs" not in self._file:
             return frozenset()
 
-        data = self._file["reversed_seqs"][:]
+        data = typing.cast("numpy.ndarray", self._file["reversed_seqs"])[:]
         return frozenset(v.decode("utf8") for v in data)
 
     def _make_new_h5_file(
@@ -597,7 +597,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         out_len = (stop - start + step - 1) // step
         out = numpy.empty(out_len, dtype=self.alphabet.dtype)
         dataset_name = f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"
-        out[:] = self._file[dataset_name][start:stop:step]
+        out[:] = typing.cast("numpy.ndarray", self._file[dataset_name])[start:stop:step]
         return out
 
     def get_seq_bytes(
@@ -636,7 +636,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
         dataset_name = f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"
-        return self._file[dataset_name].shape[0]
+        return typing.cast("numpy.ndarray", self._file[dataset_name]).shape[0]
 
     @classmethod
     def from_seqs(
@@ -769,7 +769,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         if not self.names:
             return 0
         name = self.names[0]
-        return self._file[f"{self._gapped_grp}/{self.get_hash(seqid=name)}"].shape[0]
+        return typing.cast(
+            "numpy.ndarray",
+            self._file[f"{self._gapped_grp}/{self.get_hash(seqid=name)}"],
+        ).shape[0]
 
     def __len__(self) -> int:
         return self.align_len
@@ -781,7 +784,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             raise KeyError(msg)
         if seqid not in self._ungapped_grp:
             self._make_gaps_and_ungapped(seqid)
-        return self._file[f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"].shape[0]
+        return typing.cast(
+            "numpy.ndarray",
+            self._file[f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"],
+        ).shape[0]
 
     @classmethod
     def from_seqs(
@@ -917,7 +923,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         seqhash = self.get_hash(seqid=seqid)
         if seqhash not in self._file.get(self._gaps_grp, {}):
             self._make_gaps_and_ungapped(seqid)
-        return self._file[f"{self._gaps_grp}/{seqhash}"][:]
+        return typing.cast("numpy.ndarray", self._file[f"{self._gaps_grp}/{seqhash}"])[
+            :
+        ]
 
     def get_gaps(self, seqid: str) -> NumpyIntArrayType:
         return self._get_gaps(seqid)
@@ -937,7 +945,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             raise ValueError(msg)
         seqhash = self.get_hash(seqid=seqid)
         dataset_name = f"{self._gapped_grp}/{seqhash}"
-        return self._file[dataset_name][start:stop:step]
+        return typing.cast("numpy.ndarray", self._file[dataset_name])[start:stop:step]
 
     def get_gapped_seq_str(
         self,
@@ -1020,7 +1028,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         name_to_hash = self._name_to_hash
         for i, name in enumerate(names):
             seqhash = name_to_hash[name]
-            seq_array[i] = self._file[f"{self._gapped_grp}/{seqhash}"][:]
+            seq_array[i] = typing.cast(
+                "numpy.ndarray", self._file[f"{self._gapped_grp}/{seqhash}"]
+            )[:]
         seq_array = seq_array[:, start:stop:step]
         # now exclude gaps and missing
         seqs = {}
