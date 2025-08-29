@@ -10,9 +10,8 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "blosc2",
-    "cogent3>=2025.7.10a1",
+    "cogent3>=2025.7.10a10",
     "h5py>=3.13.0",
-    "hdf5plugin>=5.1.0",
     "numpy>=2.2.4",
     "typing-extensions>=4.13.2",
     "xxhash",
