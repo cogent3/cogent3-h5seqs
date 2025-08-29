@@ -698,6 +698,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise ValueError(msg)
         self._write(path=path)
 
+    @property
+    def h5file(self) -> h5py.File | None:
+        """returns the HDF file"""
+        return self._file
+
     def close(self) -> None:
         """close the HDF file"""
         if not (self._file and self._file.id):
