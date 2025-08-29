@@ -878,3 +878,45 @@ def test_set_name_to_hash_read_only(tmp_path):
     cogent3_h5seqs._set_name_to_hash(
         h5file=h5file, name_to_hash={"s1": "not really a hash"}
     )
+
+
+@pytest.mark.parametrize(
+    "mk_cls", [cogent3.make_aligned_seqs, cogent3.make_unaligned_seqs]
+)
+@pytest.mark.parametrize("compression", [True, False])
+def test_toggle_compression_make(mk_cls, compression):
+    storage = (
+        "h5seqs_aligned" if mk_cls == cogent3.make_aligned_seqs else "h5seqs_unaligned"
+    )
+    kwargs = {"compression": compression, "storage_backend": storage}
+    exp_compress = "lzf" if compression else None
+    data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
+    seqcoll = mk_cls(data, moltype="dna", **kwargs)
+    seqhash = seqcoll.storage.get_hash("s1")
+    grp = seqcoll.storage._primary_grp
+    dataset = f"{grp}/{seqhash}"
+    record = seqcoll.storage.h5file[dataset]
+    assert record.compression == exp_compress
+
+
+@pytest.mark.parametrize(
+    "ld_cls", [cogent3.load_aligned_seqs, cogent3.load_unaligned_seqs]
+)
+@pytest.mark.parametrize("compression", [True, False])
+def test_toggle_compression_load(tmp_path, ld_cls, compression):
+    data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
+    aln = cogent3.make_aligned_seqs(data, moltype="dna")
+    outpath = tmp_path / "test.fa"
+    aln.write(outpath)
+
+    storage = (
+        "h5seqs_aligned" if ld_cls == cogent3.load_aligned_seqs else "h5seqs_unaligned"
+    )
+    kwargs = {"compression": compression, "storage_backend": storage}
+    exp_compress = "lzf" if compression else None
+    seqcoll = ld_cls(outpath, moltype="dna", **kwargs)
+    seqhash = seqcoll.storage.get_hash("s1")
+    grp = seqcoll.storage._primary_grp
+    dataset = f"{grp}/{seqhash}"
+    record = seqcoll.storage.h5file[dataset]
+    assert record.compression == exp_compress
