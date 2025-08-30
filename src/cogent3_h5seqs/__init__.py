@@ -192,9 +192,13 @@ def duplicate_h5_file(
     path: str | pathlib.Path,
     in_memory: bool,
     compression: str | None = None,
+    exclude_groups: set[str] | None = None,
 ) -> h5py.File:
+    exclude: set[str] = exclude_groups or set()
     result = open_h5_file(path=path, mode="w", in_memory=in_memory)
     for name in h5file:
+        if name in exclude:
+            continue
         data = h5file[name]
         if isinstance(data, h5py.Group):
             h5file.copy(name, result, name=name)
@@ -697,13 +701,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         )
         return cls(data=h5file, alphabet=alphabet, check=check)
 
-    def _write(self, path: str | pathlib.Path) -> None:
+    def _write(self, path: str | pathlib.Path, exclude_groups: set[str]) -> None:
         path = pathlib.Path(path).expanduser().absolute()
         curr_path = pathlib.Path(self._file.filename).absolute()
         if path == curr_path:
             # nothing to do
             return
-        output = duplicate_h5_file(h5file=self._file, path=path, in_memory=False)
+        output = duplicate_h5_file(
+            h5file=self._file, path=path, exclude_groups=exclude_groups, in_memory=False
+        )
         output.close()
 
     def write(self, path: str | pathlib.Path) -> None:
@@ -712,7 +718,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if path.suffix != f".{self.filename_suffix}":
             msg = f"path {path} does not have the expected suffix '.{self.filename_suffix}'"
             raise ValueError(msg)
-        self._write(path=path)
+        self._write(path=path, exclude_groups=set())
 
     @property
     def h5file(self) -> h5py.File | None:
@@ -1155,7 +1161,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         if path.suffix != f".{self.filename_suffix}":
             msg = f"path {path} does not have the expected suffix '.{self.filename_suffix}'"
             raise ValueError(msg)
-        self._write(path=path)
+        self._write(path=path, exclude_groups={self._ungapped_grp, self._gaps_grp})
 
 
 @functools.singledispatch
@@ -1380,8 +1386,16 @@ def write_seqs_data(
     # this will be names of collection and storage are not equal
     # slice_record of Alignment is not generic
 
-    if not seqcoll.modified and isinstance(
-        seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData)
+    if isinstance(seqcoll.storage, AlignedSeqsData):
+        # we want aligned data to remain compact
+        no_gap_data = "gaps" not in seqcoll.storage.h5file
+    else:
+        no_gap_data = False
+
+    if (
+        no_gap_data
+        and not seqcoll.modified
+        and isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData))
     ):
         storage = seqcoll.storage
         storage.h5file.flush()
@@ -1390,6 +1404,8 @@ def write_seqs_data(
             out_file.write(image)
         return path
 
+    # the following results in storing the primary data only, gapped sequences
+    # in the case of an alignment
     cls = UnalignedSeqsData if suffix == unaligned_suffix else AlignedSeqsData
     alphabet = seqcoll.storage.alphabet
     data = {s.name: numpy.array(s) for s in seqcoll.seqs}

@@ -920,3 +920,30 @@ def test_toggle_compression_load(tmp_path, ld_cls, compression):
     dataset = f"{grp}/{seqhash}"
     record = seqcoll.storage.h5file[dataset]
     assert record.compression == exp_compress
+
+
+def test_write_aligned_excludes_gaps(tmp_path, small_aligned):
+    # we don't want gaps and ungapped sequences in the output
+    outpath = tmp_path / f"test.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+    _ = small_aligned.get_seq_length(small_aligned.names[0])
+    assert "gaps" in small_aligned.h5file
+    small_aligned.write(outpath)
+    small_aligned.close()
+    got = cogent3_h5seqs.load_seqs_data_aligned(outpath)
+    assert got is not None
+    assert "gaps" not in got.h5file
+
+
+def test_write_alignment_excludes_gaps(tmp_path, raw_aligned_data):
+    outpath = tmp_path / f"test.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+    aln = cogent3.make_aligned_seqs(
+        raw_aligned_data, moltype="dna", storage_backend="h5seqs_aligned"
+    )
+    # trigger extracting gaps
+    _ = aln.seqs["s1"].seq
+    assert "gaps" in aln.storage.h5file
+    aln.write(outpath)
+    del aln
+    got = cogent3_h5seqs.load_seqs_data_aligned(outpath)
+    assert got is not None
+    assert "gaps" not in got.h5file
