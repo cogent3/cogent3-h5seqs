@@ -38,8 +38,12 @@ offset_dtype = numpy.dtype(
     [("seqid", h5py.special_dtype(vlen=bytes)), ("value", numpy.int64)]
 )
 # for the seqname to seq hash as hex
-seqhash_dtype = numpy.dtype(
-    [("key", h5py.special_dtype(vlen=bytes)), ("value", h5py.special_dtype(vlen=bytes))]
+name2hash2index_dtype = numpy.dtype(
+    [
+        ("seqid", h5py.special_dtype(vlen=bytes)),
+        ("seqhash", h5py.special_dtype(vlen=bytes)),
+        ("index", numpy.int32),
+    ]
 )
 
 # HDF5 file modes
@@ -160,32 +164,52 @@ def _set_reversed_seqs(
     _set_group(h5file, "reversed_seqs", data, compression=compression, chunk=False)
 
 
-def _set_name_to_hash(
+def _set_name_to_hash_to_index(
     h5file: h5py.File,
-    name_to_hash: dict[str, str] | None,
+    name_to_hash: dict[str, tuple[str, int]] | None,
     compression: str | None = None,
 ) -> None:
     # set the name to hash and hash to index mappings as a special group
     if not name_to_hash or h5file.mode not in _writeable_modes:
         return
 
+    if "name_to_hash" in h5file:
+        del h5file["name_to_hash"]
+
     # only create a name to hash mapping if there's something to store
     data = numpy.array(
-        [(k.encode("utf8"), v.encode("utf8")) for k, v in name_to_hash.items() if v],
-        dtype=seqhash_dtype,
+        [
+            (k.encode("utf8"), h.encode("utf8"), idx)
+            for k, (h, idx) in name_to_hash.items()
+            if h
+        ],
+        dtype=name2hash2index_dtype,
     )
     _set_group(h5file, "name_to_hash", data, compression=compression, chunk=False)
 
 
 def _get_name_to_hash(h5file: h5py.File) -> npt.NDArray | None:
-    return None if "name_to_hash" not in h5file else h5file["name_to_hash"][:]
+    return (
+        None
+        if "name_to_hash" not in h5file
+        else typing.cast("numpy.ndarray", h5file["name_to_hash"])[:]
+    )
 
 
-def _get_name_to_hash_dict(h5file: h5py.File) -> dict[str, str]:
-    n2h = _get_name_to_hash(h5file)
-    if n2h is None:
-        return {}
-    return {k.decode("utf8"): v.decode("utf8") for k, v in n2h}
+def _get_name2hash_hash2idx(h5file: h5py.File) -> tuple[dict[str, str], dict[str, int]]:
+    n2h, h2i = {}, {}
+    n2h2i = _get_name_to_hash(h5file)
+    if n2h2i is not None:
+        for n, h, i in n2h2i:
+            k = h.decode("utf8")
+            n2h[n.decode("utf8")] = k
+            if i >= 0:
+                # exclude refseq which get's assigned a negative index
+                h2i[k] = i
+
+    return n2h, h2i
+
+
 
 
 def duplicate_h5_file(
@@ -244,6 +268,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _set_offset(self._file, offset=offset, compression=self._compress)
         self._attr_set: bool = False
         self._name_to_hash: dict[str, str] = {}
+        self._hash_to_index: dict[str, int] = {}
         if check:
             self._check_file(self._file)
 
@@ -254,7 +279,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         attr_vals.extend(
             f"{attr}={self._file.attrs[attr]!r}" for attr in self._file.attrs
         )
-        n2h = _get_name_to_hash_dict(self._file)
+        n2h, _ = _get_name2hash_hash2idx(self._file)
         parts = ", ".join(attr_vals)
         return f"{name}({parts}, num_seqs={len(n2h)})"
 
@@ -391,7 +416,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def __contains__(self, seqid: str) -> bool:
         """seqid in self"""
         if not self._name_to_hash:
-            self._name_to_hash = _get_name_to_hash_dict(self._file)
+            n2h, h2i = _get_name2hash_hash2idx(self._file)  # populates if empty
+            self._name_to_hash = n2h
+            self._hash_to_index = h2i
         return seqid in self._name_to_hash
 
     @functools.singledispatchmethod
@@ -417,7 +444,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     @property
     def names(self) -> tuple[str, ...]:
         n2h = _get_name_to_hash(self._file)
-        return tuple(n2h["key"].astype(str).tolist()) if n2h is not None else ()
+        return tuple(n2h["seqid"].astype(str).tolist()) if n2h is not None else ()
 
     @property
     def offset(self) -> dict[str, int]:
@@ -566,8 +593,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise PermissionError(msg)
 
         self._populate_attrs()
-
-        name_to_hash = _get_name_to_hash_dict(self._file)
+        n2h, _ = _get_name2hash_hash2idx(self._file)
+        name_to_hash = self._name_to_hash | n2h
         overlap = name_to_hash.keys() & seqs.keys()
         if force_unique_keys and overlap:
             msg = f"{overlap} already exist in collection"
@@ -588,11 +615,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 # same seq, different name
                 continue
             seqhash_to_names[seqhash].append(seqid)
-            self._file.create_dataset(
-                name=f"{self._primary_grp}/{seqhash}",
-                data=seqarray,
-                compression=self._compress,
-            )
+            self._add_seq(seqhash=seqhash, seqarray=seqarray)
 
         if offset := offset or {}:
             _set_offset(
