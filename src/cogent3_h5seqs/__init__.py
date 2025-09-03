@@ -35,7 +35,7 @@ SeqIntArrayType = npt.NDArray[numpy.unsignedinteger]
 # for storing large dicts in HDF5
 # for the annotation offset
 offset_dtype = numpy.dtype(
-    [("key", h5py.special_dtype(vlen=bytes)), ("value", numpy.int64)]
+    [("seqid", h5py.special_dtype(vlen=bytes)), ("value", numpy.int64)]
 )
 # for the seqname to seq hash as hex
 seqhash_dtype = numpy.dtype(
