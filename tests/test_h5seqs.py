@@ -736,6 +736,34 @@ def test_set_as_default_drivers_unaligned(raw_aligned_data):
 
 
 @pytest.mark.parametrize(
+    "storage",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        "h5seqs_aligned",
+        "h5seqs_sparse",
+    ],
+)
+def test_set_as_default_drivers_aligned(raw_aligned_data, storage):
+    classes = {
+        cls._suffix: cls
+        for cls in [cogent3_h5seqs.AlignedSeqsData, cogent3_h5seqs.SparseSeqsData]
+    }
+    classes["h5seqs_aligned"] = cogent3_h5seqs.AlignedSeqsData
+    classes["h5seqs_sparse"] = cogent3_h5seqs.SparseSeqsData
+
+    cogent3.set_storage_defaults(aligned_seqs=storage)
+
+    coll = cogent3.make_aligned_seqs(raw_aligned_data, moltype="dna")
+    assert isinstance(coll.storage, classes[storage])
+
+    cogent3.set_storage_defaults(reset=True)
+
+    coll = cogent3.make_aligned_seqs(raw_aligned_data, moltype="dna")
+    assert not isinstance(coll.storage, classes[storage])
+
+
+@pytest.mark.parametrize(
     "suffix",
     [
         cogent3_h5seqs.ALIGNED_SUFFIX,
