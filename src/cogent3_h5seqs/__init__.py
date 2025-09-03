@@ -482,12 +482,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             check=False,
         )
 
-    def to_alphabet(
-        self,
-        alphabet: c3_alphabet.AlphabetABC,
-        check_valid: bool = True,
-    ) -> typing_extensions.Self:
-        if (
+    def _compatible_alphabet(self, alphabet: c3_alphabet.CharAlphabet) -> bool:
+        return (
             len(self.alphabet) == len(alphabet)
             and len(
                 {
@@ -497,22 +493,29 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 },
             )
             == 1
-        ):
-            # rna <-> dna swap just replace alphabet
-            return self.copy(alphabet=alphabet)
+        )
+
+    def to_alphabet(
+        self,
+        alphabet: c3_alphabet.AlphabetABC,
+        check_valid: bool = True,
+    ) -> "UnalignedSeqsData":
+        alpha = typing.cast("c3_alphabet.CharAlphabet", alphabet)
+        if self._compatible_alphabet(alpha):
+            return self.copy(alphabet=alpha)
 
         new_data = {}
         for seqid in self.names:
             seq_data = self.get_seq_array(seqid=seqid)
             as_new_alpha = self.alphabet.convert_seq_array_to(
                 seq=seq_data,
-                alphabet=alphabet,
+                alphabet=alpha,
                 check_valid=False,
             )
-            if check_valid and not alphabet.is_valid(as_new_alpha):
+            if check_valid and not alpha.is_valid(as_new_alpha):
                 msg = (
                     f"Changing from old alphabet={self.alphabet} to new "
-                    f"{alphabet=} is not valid for this data"
+                    f"{alpha=} is not valid for this data"
                 )
                 raise c3_alphabet.AlphabetError(
                     msg,
@@ -1141,18 +1144,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     ) -> "AlignedSeqsData":
         """Returns a new AlignedSeqsData object with the same underlying data
         with a new alphabet."""
-        if (
-            len(alphabet) == len(self.alphabet)
-            and len(
-                {
-                    (a, b)
-                    for a, b in zip(self.alphabet, alphabet, strict=False)
-                    if a != b
-                },
-            )
-            == 1
-        ):
-            # special case where mapping between dna and rna
+        if self._compatible_alphabet(alphabet):
             return self.copy(alphabet=alphabet)
 
         gapped = {}
