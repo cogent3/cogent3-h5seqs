@@ -301,6 +301,29 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         )
         self._attr_set = True
 
+    def _populate_optional_grps(
+        self,
+        offset: dict[str, int] | None,
+        reversed_seqs: frozenset[str] | None,
+        name_to_hash: dict[str, str],
+        hash_to_index: dict[str, int],
+    ) -> None:
+        # we always compress these as they tend be loaded in one go
+        if offset := offset or {}:
+            _set_offset(
+                self._file, offset=self.offset | offset, compression=DEFAULT_COMPRESSION
+            )
+
+        reversed_seqs = reversed_seqs or frozenset()
+        _set_reversed_seqs(self._file, reversed_seqs, compression=DEFAULT_COMPRESSION)
+        _set_name_to_hash_to_index(
+            self._file,
+            {k: (h, hash_to_index.get(h, -1)) for k, h in name_to_hash.items()},
+            compression=DEFAULT_COMPRESSION,
+        )
+        self._name_to_hash |= name_to_hash
+        self._hash_to_index |= hash_to_index
+
     @property
     def filename_suffix(self) -> str:
         """suffix for the files"""
@@ -617,15 +640,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             seqhash_to_names[seqhash].append(seqid)
             self._add_seq(seqhash=seqhash, seqarray=seqarray)
 
-        if offset := offset or {}:
-            _set_offset(
-                self._file, offset=self.offset | offset, compression=self._compress
-            )
-
-        reversed_seqs = reversed_seqs or frozenset()
-        _set_reversed_seqs(self._file, reversed_seqs, compression=self._compress)
-
-        _set_name_to_hash(self._file, name_to_hash, compression=self._compress)
+        self._populate_optional_grps(offset, reversed_seqs, name_to_hash, {})
         return self
 
     def get_seq_array(
