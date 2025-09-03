@@ -6,6 +6,34 @@ import pytest
 
 import cogent3_h5seqs
 
+c3_load_funcs = {
+    cogent3_h5seqs.ALIGNED_SUFFIX: cogent3.load_aligned_seqs,
+    cogent3_h5seqs.SPARSE_SUFFIX: cogent3.load_aligned_seqs,
+    cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3.load_unaligned_seqs,
+}
+
+c3_make_funcs = {
+    cogent3_h5seqs.ALIGNED_SUFFIX: cogent3.make_aligned_seqs,
+    cogent3_h5seqs.SPARSE_SUFFIX: cogent3.make_aligned_seqs,
+    cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3.make_unaligned_seqs,
+}
+c3h5_load_funcs = {
+    cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.load_seqs_data_aligned,
+    cogent3_h5seqs.SPARSE_SUFFIX: cogent3_h5seqs.load_seqs_data_sparse,
+    cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3_h5seqs.load_seqs_data_unaligned,
+}
+
+
+def make_sparse(*args, **kwargs):
+    return cogent3_h5seqs.make_aligned(*args, sparse=True, **kwargs)
+
+
+c3h5_make_funcs = {
+    cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.make_aligned,
+    cogent3_h5seqs.SPARSE_SUFFIX: make_sparse,
+    cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3_h5seqs.make_unaligned,
+}
+
 
 @pytest.fixture
 def dna_alpha():
@@ -17,7 +45,7 @@ def raw_data():
     return {"s1": "ACGG", "s2": "TGGGCAGTA"}
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def raw_aligned_data():
     return {"s1": "TGG--ACGG", "s2": "TGGGCAGTA"}
 
@@ -30,13 +58,16 @@ def small(raw_data, dna_alpha):
 
 
 @pytest.mark.parametrize(
-    "mk_obj", [cogent3_h5seqs.make_unaligned, cogent3_h5seqs.make_aligned]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_make_from_empty(dna_alpha, mk_obj, tmp_path):
-    store_path = (
-        tmp_path
-        / f"empty.{cogent3_h5seqs.ALIGNED_SUFFIX if mk_obj == cogent3_h5seqs.make_aligned else cogent3_h5seqs.UNALIGNED_SUFFIX}"
-    )
+def test_make_from_empty(dna_alpha, tmp_path, suffix):
+    mk_obj = c3h5_make_funcs[suffix]
+    store_path = tmp_path / f"empty.{suffix}"
     init = mk_obj(store_path, alphabet=dna_alpha, mode="w")
     init.close()  # this forces attributes to be written
     got = mk_obj(store_path, mode="r", check=False)
@@ -145,7 +176,7 @@ def test_write(tmp_path, small):
     assert loaded == small
 
 
-@pytest.mark.parametrize("fxt", ["small", "small_aligned"])
+@pytest.mark.parametrize("fxt", ["small", "small_aligned", "small_aligned_sparse"])
 def test_write_invalid_suffix(tmp_path, fxt, request):
     small = request.getfixturevalue(fxt)
     # wrong suffix
@@ -176,35 +207,56 @@ def test_write_invalid(tmp_path, small):
 
 
 @pytest.mark.parametrize(
-    "func",
-    [cogent3_h5seqs.load_seqs_data_unaligned, cogent3_h5seqs.load_seqs_data_aligned],
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_load_invalid(tmp_path, func):
+def test_load_invalid(tmp_path, suffix):
+    func = c3h5_load_funcs[suffix]
     path = tmp_path / "wrong-suffix.h5seqs"
     with pytest.raises(ValueError):
         func(path)
 
 
 @pytest.mark.parametrize(
-    "func",
-    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_equality(raw_aligned_data, dna_alpha, func):
-    store1 = func(None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
-    store2 = func(None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
+def test_equality(raw_aligned_data, dna_alpha, suffix):
+    mk_obj = c3h5_make_funcs[suffix]
+    store1 = mk_obj(
+        None, data=raw_aligned_data.copy(), in_memory=True, alphabet=dna_alpha
+    )
+    store2 = mk_obj(
+        None, data=raw_aligned_data.copy(), in_memory=True, alphabet=dna_alpha
+    )
     assert store1 == store2
 
 
 @pytest.mark.parametrize(
-    "func",
-    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_inequality(raw_aligned_data, dna_alpha, func):
-    store1 = func(None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
+def test_inequality(raw_aligned_data, dna_alpha, suffix):
+    mk_obj = c3h5_make_funcs[suffix]
+    store1 = mk_obj(
+        None, data=raw_aligned_data.copy(), in_memory=True, alphabet=dna_alpha
+    )
     # wrong type
     assert store1 != "string"
     # seqnames different
-    store2 = func(
+    store2 = mk_obj(
         None,
         data={k: v for k, v in raw_aligned_data.items() if k != "s1"},
         in_memory=True,
@@ -214,7 +266,7 @@ def test_inequality(raw_aligned_data, dna_alpha, func):
     # sequence different
     data_edited = raw_aligned_data.copy()
     data_edited["s1"] = data_edited["s1"][:-1] + "N"
-    store2 = func(
+    store2 = mk_obj(
         None,
         data=data_edited,
         in_memory=True,
@@ -222,7 +274,7 @@ def test_inequality(raw_aligned_data, dna_alpha, func):
     )
     assert store1 != store2
     # attrs different
-    store2 = func(
+    store2 = mk_obj(
         None,
         data=raw_aligned_data,
         in_memory=True,
@@ -234,7 +286,7 @@ def test_inequality(raw_aligned_data, dna_alpha, func):
     store1.set_attr("test", "2")
     assert store1 != store2
     # fields different
-    store2 = func(
+    store2 = mk_obj(
         None,
         data=raw_aligned_data,
         in_memory=True,
@@ -245,10 +297,16 @@ def test_inequality(raw_aligned_data, dna_alpha, func):
     assert store1 != store2
 
 
-def test_make_alignedseqsdata(raw_aligned_data, dna_alpha):
-    asd = cogent3_h5seqs.make_aligned(
-        path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
-    )
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_make_alignedseqsdata(raw_aligned_data, dna_alpha, suffix):
+    mk_obj = c3h5_make_funcs[suffix]
+    asd = mk_obj(path=None, data=raw_aligned_data, in_memory=True, alphabet=dna_alpha)
     assert len(asd) == len(raw_aligned_data["s2"])
     assert asd.names == ("s1", "s2")
 
@@ -260,13 +318,22 @@ def test_driver_unaligned(raw_data):
     assert isinstance(seqs.storage, cogent3_h5seqs.UnalignedSeqsData)
 
 
-def test_driver_aligned(raw_aligned_data):
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_driver_aligned(raw_aligned_data, suffix):
     seqs = cogent3.make_aligned_seqs(
-        raw_aligned_data,
-        moltype="dna",
-        storage_backend="h5seqs_aligned",
+        raw_aligned_data, moltype="dna", storage_backend=suffix
     )
-    assert isinstance(seqs.storage, cogent3_h5seqs.AlignedSeqsData)
+    classes = {
+        cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.AlignedSeqsData,
+        cogent3_h5seqs.SPARSE_SUFFIX: cogent3_h5seqs.SparseSeqsData,
+    }
+    assert isinstance(seqs.storage, classes[suffix])
 
 
 @pytest.fixture
@@ -296,19 +363,45 @@ def small_aligned(raw_aligned_data, dna_alpha):
 
 
 @pytest.fixture
+def small_aligned_sparse(raw_aligned_data, dna_alpha):
+    return cogent3_h5seqs.make_aligned(
+        path=None,
+        data=raw_aligned_data.copy(),
+        in_memory=True,
+        alphabet=dna_alpha,
+        suffix=cogent3_h5seqs.SPARSE_SUFFIX,
+        sparse=True,
+    )
+
+
+@pytest.fixture
 def h5_aligned_path(small_aligned, tmp_path):
     outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.ALIGNED_SUFFIX}"
     small_aligned.write(outpath)
     return outpath
 
 
-def test_load_h5_aligned(h5_aligned_path, raw_aligned_data):
-    aln = cogent3.load_aligned_seqs(h5_aligned_path, moltype="dna")
+@pytest.fixture
+def h5_sparse_path(small_aligned_sparse, tmp_path):
+    outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.SPARSE_SUFFIX}"
+    small_aligned_sparse.write(outpath)
+    return outpath
+
+
+@pytest.mark.parametrize("fxt", ["h5_aligned_path", "h5_sparse_path"])
+def test_load_h5_aligned(fxt, request, raw_aligned_data):
+    aligned_path = request.getfixturevalue(fxt)
+    aln = cogent3.load_aligned_seqs(aligned_path, moltype="dna")
     assert aln.to_dict() == raw_aligned_data
 
 
 @pytest.mark.parametrize(
-    "cls", [cogent3_h5seqs.UnalignedSeqsData, cogent3_h5seqs.AlignedSeqsData]
+    "cls",
+    [
+        cogent3_h5seqs.UnalignedSeqsData,
+        cogent3_h5seqs.AlignedSeqsData,
+        cogent3_h5seqs.SparseSeqsData,
+    ],
 )
 def test_check_init(cls, dna_alpha):
     h5file = cogent3_h5seqs.open_h5_file(path=None, mode="w", in_memory=True)
@@ -322,7 +415,9 @@ def test_check_init(cls, dna_alpha):
     h5file.close()
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_unaligned", "small_aligned_sparse"]
+)
 def test_getitem_str_int(fxt, request):
     obj = request.getfixturevalue(fxt)
     seqid = "s1"
@@ -332,20 +427,19 @@ def test_getitem_str_int(fxt, request):
     assert str(str_got) == str(int_got)
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_unaligned", "small_aligned_sparse"]
+)
 def test_getitem_err(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(TypeError):
         obj[20.0]
 
 
-@pytest.fixture(params=[cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned])
+@pytest.fixture(params=c3h5_make_funcs.keys())
 def h5seq_file(request, tmp_path, dna_alpha):
-    make = request.param
-    aligned = make == cogent3_h5seqs.make_aligned
-    suffix = (
-        cogent3_h5seqs.ALIGNED_SUFFIX if aligned else cogent3_h5seqs.UNALIGNED_SUFFIX
-    )
+    suffix = request.param
+    make = c3h5_make_funcs[suffix]
     path = tmp_path / f"test.{suffix}"
     obj = make(path, mode="w", alphabet=dna_alpha)
     obj.close()
@@ -354,11 +448,7 @@ def h5seq_file(request, tmp_path, dna_alpha):
 
 
 def test_add_seqs_not_writeable(h5seq_file):
-    load = (
-        cogent3_h5seqs.load_seqs_data_aligned
-        if h5seq_file.suffix.endswith(cogent3_h5seqs.ALIGNED_SUFFIX)
-        else cogent3_h5seqs.load_seqs_data_unaligned
-    )
+    load = c3h5_load_funcs[h5seq_file.suffix[1:]]
     obj = load(path=h5seq_file, mode="r", check=False)
     with pytest.raises(PermissionError):
         obj.add_seqs({"seq1": "ATGC"})
@@ -373,20 +463,32 @@ def test_make_empty_aligned(dna_alpha):
     assert len(asd) == 0
 
 
-def test_aligned_add_seqs_duplicates_disallowed(small_aligned, raw_aligned_data):
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_aligned_add_seqs_duplicates_disallowed(fxt, request, raw_aligned_data):
+    obj = request.getfixturevalue(fxt)
     with pytest.raises(ValueError):
-        small_aligned.add_seqs(raw_aligned_data, force_unique_keys=True)
+        obj.add_seqs(raw_aligned_data, force_unique_keys=True)
 
 
-def test_aligned_add_seqs_duplicates_allowed(small_aligned, raw_aligned_data):
-    num_seqs = len(small_aligned.names)
-    small_aligned.add_seqs(raw_aligned_data, force_unique_keys=False)
-    assert len(small_aligned.names) == num_seqs
-
-
-def test_unaligned_add_seqs_duplicates_disallowed(small_unaligned, raw_data):
+def test_sparse_add_seqs_wrong_ref(small_aligned_sparse):
+    other = {"bad": "A" * small_aligned_sparse.align_len}
     with pytest.raises(ValueError):
-        small_unaligned.add_seqs(raw_data, force_unique_keys=True)
+        small_aligned_sparse.add_seqs(other, ref_name="bad")
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_aligned_add_seqs_duplicates_allowed(fxt, request, raw_aligned_data):
+    obj = request.getfixturevalue(fxt)
+    num_seqs = len(obj.names)
+    obj.add_seqs(raw_aligned_data, force_unique_keys=False)
+    assert len(obj.names) == num_seqs
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_unaligned_add_seqs_duplicates_disallowed(fxt, request, raw_data):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(ValueError):
+        obj.add_seqs(raw_data, force_unique_keys=True)
 
 
 def test_unaligned_add_seqs_duplicates_allowed(small_unaligned, raw_data):
@@ -395,7 +497,9 @@ def test_unaligned_add_seqs_duplicates_allowed(small_unaligned, raw_data):
     assert len(small_unaligned.names) == num_seqs
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_unaligned", "small_aligned_sparse"]
+)
 def test_get_seq_length(fxt, request, raw_data):
     obj = request.getfixturevalue(fxt)
     # seq s2 is the same between the aligned and unaligned examples
@@ -404,7 +508,9 @@ def test_get_seq_length(fxt, request, raw_data):
     assert l == expect
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_aligned_sparse", "small_unaligned"]
+)
 def test_get_seq_length_invalid_seqid(fxt, request):
     obj = request.getfixturevalue(fxt)
     # seq s2 is the same between the aligned and unaligned examples
@@ -412,7 +518,9 @@ def test_get_seq_length_invalid_seqid(fxt, request):
         obj.get_seq_length(seqid="missing")
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_aligned_sparse", "small_unaligned"]
+)
 def test_get_seq_array(fxt, request, raw_data, dna_alpha):
     obj = request.getfixturevalue(fxt)
     # seq s2 is the same between the aligned and unaligned examples
@@ -421,7 +529,9 @@ def test_get_seq_array(fxt, request, raw_data, dna_alpha):
     assert (s == expect).all()
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_aligned_sparse", "small_unaligned"]
+)
 @pytest.mark.parametrize("arg", ["start", "stop", "step"])
 def test_get_seq_array_invalid_pos(fxt, request, arg):
     obj = request.getfixturevalue(fxt)
@@ -429,19 +539,33 @@ def test_get_seq_array_invalid_pos(fxt, request, arg):
         obj.get_seq_array(seqid="s2", **{arg: -1})
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_aligned_sparse", "small_unaligned"]
+)
 def test_get_seq_array_invalid_seqid(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
         obj.get_seq_array(seqid="missing")
 
 
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_gaps_invalid_seqid(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_gaps(seqid="missing")
+
+
 @pytest.mark.parametrize(
-    "mk_obj", [cogent3.make_unaligned_seqs, cogent3.make_aligned_seqs]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_from_storage(mk_obj, raw_aligned_data):
-    aligned = mk_obj == cogent3.make_aligned_seqs
-    storage_backend = "h5seqs_aligned" if aligned else "h5seqs_unaligned"
+def test_from_storage(suffix, raw_aligned_data):
+    mk_obj = c3_make_funcs[suffix]
+    storage_backend = suffix
     coll = mk_obj(
         raw_aligned_data,
         moltype="dna",
@@ -454,11 +578,16 @@ def test_from_storage(mk_obj, raw_aligned_data):
 
 
 @pytest.mark.parametrize(
-    "mk_obj", [cogent3.make_unaligned_seqs, cogent3.make_aligned_seqs]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_from_storage_invalid(mk_obj, raw_aligned_data):
-    aligned = mk_obj == cogent3.make_aligned_seqs
-    storage_backend = "h5seqs_aligned" if aligned else "h5seqs_unaligned"
+def test_from_storage_invalid(suffix, raw_aligned_data):
+    storage_backend = suffix
+    mk_obj = c3_make_funcs[suffix]
     coll = mk_obj(
         raw_aligned_data,
         moltype="dna",
@@ -469,77 +598,126 @@ def test_from_storage_invalid(mk_obj, raw_aligned_data):
         coll.storage.from_storage({}, in_memory=False)
 
 
-def test_aligned_from_names_and_array(small_aligned):
-    names = small_aligned.names
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_aligned_from_names_and_array(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    names = obj.names
     data = numpy.array(
-        [small_aligned.get_gapped_seq_array(seqid=name) for name in names],
-        dtype=small_aligned.alphabet.dtype,
+        [obj.get_gapped_seq_array(seqid=name) for name in names],
+        dtype=obj.alphabet.dtype,
     )
-    got = small_aligned.from_names_and_array(
-        names=names, data=data, alphabet=small_aligned.alphabet
+    got = obj.from_names_and_array(
+        names=names, data=data, alphabet=obj.alphabet, sparse="sparse" in fxt
     )
-    assert got == small_aligned
-    assert got is not small_aligned
+    assert got == obj
+    assert got is not obj
 
 
-def test_aligned_from_names_and_array_invalid(small_aligned):
-    names = small_aligned.names
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_aligned_from_names_and_array_invalid(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    names = obj.names
     data = numpy.array(
-        [small_aligned.get_gapped_seq_array(seqid=name) for name in names],
-        dtype=small_aligned.alphabet.dtype,
+        [obj.get_gapped_seq_array(seqid=name) for name in names],
+        dtype=obj.alphabet.dtype,
     )
     with pytest.raises(ValueError):
-        small_aligned.from_names_and_array(
-            names=names[:-1], data=data, alphabet=small_aligned.alphabet
-        )
+        obj.from_names_and_array(names=names[:-1], data=data, alphabet=obj.alphabet)
 
 
-def test_aligned_from_names_and_array2(raw_aligned_data, dna_alpha):
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_aligned_from_names_and_array2(raw_aligned_data, dna_alpha, suffix):
     aln = cogent3.make_aligned_seqs(
-        raw_aligned_data, moltype="dna", storage_backend="h5seqs_aligned"
+        raw_aligned_data, moltype="dna", storage_backend=suffix
     )
+    classes = {
+        cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.AlignedSeqsData,
+        cogent3_h5seqs.SPARSE_SUFFIX: cogent3_h5seqs.SparseSeqsData,
+    }
+    cls = classes[suffix]
     seqs = list(aln.seqs)
     gaps = {s.name: s.map.array for s in seqs}
     s = {s.name: numpy.array(s.seq) for s in seqs}
-    got = cogent3_h5seqs.AlignedSeqsData.from_seqs_and_gaps(
-        seqs=s, gaps=gaps, alphabet=dna_alpha
-    )
+    got = cls.from_seqs_and_gaps(seqs=s, gaps=gaps, alphabet=dna_alpha)
     assert got == aln.storage
 
 
-def test_aligned_get_ungapped(small_aligned, raw_aligned_data):
-    aln = cogent3.make_aligned_seqs(small_aligned, moltype="dna")
-    ungapped = aln.degap(storage_backend="h5seqs_unaligned")
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_aligned_get_ungapped(small_aligned, raw_aligned_data, suffix):
+    aln = cogent3.make_aligned_seqs(
+        small_aligned, moltype="dna", storage_backend=suffix
+    )
+    ungapped = aln.degap(storage_backend="c3h5u")
     expect = {n: s.replace("-", "") for n, s in raw_aligned_data.items()}
     assert ungapped.to_dict() == expect
     assert isinstance(ungapped.storage, cogent3_h5seqs.UnalignedSeqsData)
 
 
-@pytest.mark.parametrize("storage_backend", [None, "h5seqs_aligned"])
-def test_write_aligned(raw_aligned_data, storage_backend, tmp_path):
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        None,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+@pytest.mark.parametrize(
+    "out_name",
+    [
+        f"aligned_output.{cogent3_h5seqs.ALIGNED_SUFFIX}",
+        f"aligned_output.{cogent3_h5seqs.SPARSE_SUFFIX}",
+    ],
+)
+def test_write_aligned(raw_aligned_data, suffix, tmp_path, out_name):
     aln = cogent3.make_aligned_seqs(
-        raw_aligned_data, moltype="dna", storage_backend=storage_backend
+        raw_aligned_data, moltype="dna", storage_backend=suffix
     )
-    outpath = tmp_path / f"aligned_output.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+    outpath = tmp_path / out_name
     aln.write(outpath)
     assert outpath.exists()
     assert outpath.is_file()
 
 
-def test_get_positions(raw_aligned_data):
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_get_positions(raw_aligned_data, suffix):
     c3 = cogent3.make_aligned_seqs(
         raw_aligned_data, moltype="dna", storage_backend=None
     )
     h5 = cogent3.make_aligned_seqs(
-        raw_aligned_data, moltype="dna", storage_backend="h5seqs_aligned"
+        raw_aligned_data, moltype="dna", storage_backend=suffix
     )
     assert (c3.array_seqs == h5.array_seqs).all()
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
 @pytest.mark.parametrize("arg", ["start", "stop", "step"])
-def test_get_positions_invalid_coord(raw_aligned_data, arg):
+def test_get_positions_invalid_coord(raw_aligned_data, arg, suffix):
     h5 = cogent3.make_aligned_seqs(
-        raw_aligned_data, moltype="dna", storage_backend="h5seqs_aligned"
+        raw_aligned_data, moltype="dna", storage_backend=suffix
     )
     with pytest.raises(ValueError):
         h5.storage.get_positions(names=["s1", "s2"], **{arg: -1})
@@ -558,9 +736,20 @@ def test_set_as_default_drivers_unaligned(raw_aligned_data):
 
 
 @pytest.mark.parametrize(
-    "mk_obj", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_del(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
+def test_del(raw_aligned_data, tmp_path, dna_alpha, suffix):
+    funcs = {
+        cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.make_aligned,
+        cogent3_h5seqs.SPARSE_SUFFIX: cogent3_h5seqs.make_aligned,
+        cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3_h5seqs.make_unaligned,
+    }
+    mk_obj = funcs[suffix]
     # passing a filename without a suffix means it will be cleaned
     # up on object deletion
     outpath = tmp_path / "output"
@@ -573,9 +762,16 @@ def test_del(mk_obj, raw_aligned_data, tmp_path, dna_alpha):
     assert not outpath.exists()
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
 @pytest.mark.parametrize("path_type", [pathlib.Path, str])
-def test_writing_alignment(tmp_path, path_type):
-    outpath = tmp_path / "alignment_output.c3h5a"
+def test_writing_alignment(tmp_path, path_type, suffix):
+    outpath = tmp_path / f"alignment_output.{suffix}"
     aln = cogent3.get_dataset("brca1")
     assert not outpath.exists()
     aln.write(path_type(outpath))
@@ -605,8 +801,15 @@ def test_writing_alignment_wrong_suffix(tmp_path):
         coll.write(outpath)
 
 
-def test_load_unaligned_wrong_suffix(tmp_path):
-    outpath = tmp_path / "alignment_output.c3h5a"
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_load_unaligned_wrong_suffix(tmp_path, suffix):
+    outpath = tmp_path / f"alignment_output.{suffix}"
     aln = cogent3.get_dataset("brca1")
     aln.write(outpath)
     # alignment invalid for unaligned
@@ -623,7 +826,9 @@ def test_load_aligned_wrong_suffix(tmp_path):
         cogent3.load_aligned_seqs(outpath, moltype="dna")
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_aligned_sparse", "small_unaligned"]
+)
 def test_set_attr(fxt, request):
     obj = request.getfixturevalue(fxt)
     obj.set_attr("test", "2")
@@ -636,15 +841,19 @@ def test_set_attr(fxt, request):
     assert copy.get_attr("test") == "1"
 
 
-def test_set_attr_invalid_type(small_aligned):
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_set_attr_invalid_type(fxt, request):
+    obj = request.getfixturevalue(fxt)
     with pytest.raises(TypeError):
-        small_aligned.set_attr("test", numpy.array("acbgdqwertyuiop", dtype="U<15"))
+        obj.set_attr("test", numpy.array("acbgdqwertyuiop", dtype="U<15"))
 
     with pytest.raises(TypeError):
-        small_aligned.set_attr("test", {"a": 1, "b": 2})
+        obj.set_attr("test", {"a": 1, "b": 2})
 
 
-@pytest.mark.parametrize("fxt", ["small_aligned", "small_unaligned"])
+@pytest.mark.parametrize(
+    "fxt", ["small_aligned", "small_aligned_sparse", "small_unaligned"]
+)
 def test_get_attr_missing(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
@@ -652,58 +861,93 @@ def test_get_attr_missing(fxt, request):
 
 
 def test_set_attr_invalid(h5seq_file):
-    load = (
-        cogent3_h5seqs.load_seqs_data_aligned
-        if h5seq_file.suffix.endswith(cogent3_h5seqs.ALIGNED_SUFFIX)
-        else cogent3_h5seqs.load_seqs_data_unaligned
-    )
+    load = c3h5_load_funcs[h5seq_file.suffix[1:]]
     obj = load(path=h5seq_file, mode="r", check=False)
     with pytest.raises(PermissionError):
         obj.set_attr("test", "1")
 
 
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
 @pytest.mark.parametrize("index", ["s1", 0])
-def test_get_ungapped(small_aligned, index):
-    ungapped = small_aligned[index]
+def test_get_ungapped(fxt, request, index):
+    obj = request.getfixturevalue(fxt)
+    ungapped = obj[index]
     assert ungapped.str_value == "TGGACGG"
 
 
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
 @pytest.mark.parametrize("arg", ["start", "stop", "step"])
-def test_get_gapped_seq_invalid_pos(small_aligned, arg):
+def test_get_gapped_seq_invalid_pos(fxt, request, arg):
+    obj = request.getfixturevalue(fxt)
     with pytest.raises(ValueError):
-        small_aligned.get_gapped_seq_array(seqid="s1", **{arg: -1})
+        obj.get_gapped_seq_array(seqid="s1", **{arg: -1})
 
 
-def test_get_gapped_seq_str(small_aligned, raw_aligned_data):
-    got = small_aligned[0]
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_gapped_seq_str(fxt, request, raw_aligned_data):
+    obj = request.getfixturevalue(fxt)
+    got = obj[0]
     expect = raw_aligned_data["s1"]
     assert got.gapped_str_value == expect
-    s = small_aligned.get_gapped_seq_str(seqid="s1")
+    s = obj.get_gapped_seq_str(seqid="s1")
     assert s == expect
 
 
-def test_get_gapped_seq_bytes(small_aligned, raw_aligned_data):
-    got = small_aligned[0]
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_gapped_seq_bytes(fxt, request, raw_aligned_data):
+    obj = request.getfixturevalue(fxt)
+    got = obj[0]
     expect = raw_aligned_data[got.seqid].encode("utf-8")
     assert got.gapped_bytes_value == expect
-    s = small_aligned.get_gapped_seq_bytes(seqid="s1")
+    s = obj.get_gapped_seq_bytes(seqid="s1")
     assert s == expect
 
 
-def test_get_positions_invalid_name(small_aligned):
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_gapped_seq_array_invalidseqid(fxt, request):
+    obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
-        small_aligned.get_positions(names=["missing"])
+        _ = obj.get_gapped_seq_array(seqid="blah")
 
 
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_positions_invalid_name(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_positions(names=["missing"])
+
+
+@pytest.mark.parametrize(
+    "suffix", [cogent3_h5seqs.ALIGNED_SUFFIX, cogent3_h5seqs.SPARSE_SUFFIX]
+)
+def test_get_valid_positions(suffix, dna_alpha):
+    func = c3h5_make_funcs[suffix]
+    data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
+    obj = func(None, data=data.copy(), in_memory=True, alphabet=dna_alpha)
+    full = numpy.array([dna_alpha.to_indices(data[n]) for n in obj.names])
+    got = obj.get_positions(obj.names)
+    numpy.testing.assert_equal(got, full)
+    sl = slice(2, 8)
+    got = obj.get_positions(obj.names, start=sl.start, stop=sl.stop)
+    numpy.testing.assert_equal(got, full[:, sl])
+    sl = slice(2, 8, 2)
+    got = obj.get_positions(obj.names, start=sl.start, stop=sl.stop, step=sl.step)
+    numpy.testing.assert_equal(got, full[:, sl])
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
 @pytest.mark.parametrize("arg", ["start", "stop", "step"])
-def test_get_ungapped_invalid_coord(small_aligned, arg):
+def test_get_ungapped_invalid_coord(fxt, request, arg):
+    obj = request.getfixturevalue(fxt)
     with pytest.raises(ValueError):
-        small_aligned.get_ungapped(name_map={"s1": "s1"}, **{arg: -1})
+        obj.get_ungapped(name_map={"s1": "s1"}, **{arg: -1})
 
 
-def test_gadd_seqs_invalid_length(small_aligned):
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_add_seqs_invalid_length(fxt, request):
+    obj = request.getfixturevalue(fxt)
     with pytest.raises(ValueError):
-        small_aligned.add_seqs({"s5": "ACGT"})
+        obj.add_seqs({"s5": "ACGT"})
 
 
 def test_write_seqs_data_invalid_suffix():
@@ -722,12 +966,17 @@ def test_open_file_fails(tmp_path):
         cogent3_h5seqs.open_h5_file(path, mode="r", in_memory=False)
 
 
-def test_get_hash(raw_aligned_data, dna_alpha):
+@pytest.mark.parametrize("sparse", [True, False])
+def test_get_hash(raw_aligned_data, dna_alpha, sparse):
     unaligned = cogent3_h5seqs.make_unaligned(
         "memory", data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
     )
     aligned = cogent3_h5seqs.make_aligned(
-        "memory", data=raw_aligned_data, in_memory=True, alphabet=dna_alpha
+        "memory",
+        data=raw_aligned_data,
+        in_memory=True,
+        alphabet=dna_alpha,
+        sparse=sparse,
     )
     seqid = "s1"
     h_u = unaligned.get_hash(seqid)
@@ -735,7 +984,7 @@ def test_get_hash(raw_aligned_data, dna_alpha):
     assert h_u == h_a
 
 
-@pytest.mark.parametrize("fxt", ["small", "small_aligned"])
+@pytest.mark.parametrize("fxt", ["small", "small_aligned", "small_aligned_sparse"])
 def test_get_hash_missing(fxt, request):
     small = request.getfixturevalue(fxt)
     h = small.get_hash(seqid="missing")
@@ -752,19 +1001,29 @@ def test_invalid_path(func, raw_aligned_data, dna_alpha):
 
 
 @pytest.mark.parametrize(
-    "func",
-    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_invalid_alphabet(func, raw_aligned_data):
+def test_invalid_alphabet(suffix, raw_aligned_data):
+    func = c3h5_make_funcs[suffix]
     with pytest.raises(ValueError):
         func(None, data=raw_aligned_data, in_memory=True, alphabet=None, mode="w")
 
 
 @pytest.mark.parametrize(
-    "func",
-    [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned],
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_to_alphabet_invalid(func):
+def test_to_alphabet_invalid(suffix):
+    func = c3h5_make_funcs[suffix]
     prot = cogent3.get_moltype("protein").most_degen_alphabet()
     dna = cogent3.get_moltype("dna").most_degen_alphabet()
     data = {"Human": "CGTNTHASSL", "Mouse": "CGTDAHASSL", "Rhesus": "CGTNTHASSL"}
@@ -774,7 +1033,8 @@ def test_to_alphabet_invalid(func):
         storage.to_alphabet(dna)
 
 
-def subset_seqcoll_default(make_func, rename):
+def subset_seqcoll_default(suffix, rename):
+    make_func = c3_make_funcs[suffix]
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
     coll = make_func(
         data,
@@ -788,18 +1048,14 @@ def subset_seqcoll_default(make_func, rename):
     return coll.take_seqs(names)
 
 
-def subset_seqcoll_h5(make_func, rename):
+def subset_seqcoll_h5(suffix, rename):
+    make_func = c3_make_funcs[suffix]
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
-    storage_backend = (
-        "h5seqs_aligned"
-        if make_func == cogent3.make_aligned_seqs
-        else "h5seqs_unaligned"
-    )
     coll = make_func(
         data,
         moltype="dna",
         info={"aligned": make_func == cogent3.make_aligned_seqs},
-        storage_backend=storage_backend,
+        storage_backend=suffix,
     )
     names = ["S1", "S3"] if rename else ["s1", "s3"]
     if rename:
@@ -810,11 +1066,16 @@ def subset_seqcoll_h5(make_func, rename):
 
 @pytest.mark.parametrize("storage_func", [subset_seqcoll_h5, subset_seqcoll_default])
 @pytest.mark.parametrize(
-    "make_func", [cogent3.make_aligned_seqs, cogent3.make_unaligned_seqs]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
 )
 @pytest.mark.parametrize("rename", [True, False])
-def test_write_subsets(storage_func, make_func, rename, tmp_path):
-    subset = storage_func(make_func, rename=rename)
+def test_write_subsets(storage_func, suffix, rename, tmp_path):
+    subset = storage_func(suffix, rename=rename)
     aligned = subset.info["aligned"]
     suffix = (
         cogent3_h5seqs.ALIGNED_SUFFIX if aligned else cogent3_h5seqs.UNALIGNED_SUFFIX
@@ -831,11 +1092,16 @@ def test_write_subsets(storage_func, make_func, rename, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "make_func", [cogent3.make_aligned_seqs, cogent3.make_unaligned_seqs]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
 )
-def test_write_custom_suffix(tmp_path, make_func):
-    seqcoll = subset_seqcoll_default(make_func, rename=False)
-    aligned = make_func == cogent3.make_aligned_seqs
+def test_write_custom_suffix(tmp_path, suffix):
+    seqcoll = subset_seqcoll_default(suffix, rename=False)
+    aligned = suffix != cogent3_h5seqs.UNALIGNED_SUFFIX
     suffix = "aligned" if aligned else "unaligned"
     kwargs = {"aligned_suffix": suffix} if aligned else {"unaligned_suffix": suffix}
     outpath = tmp_path / f"custom_suffix_output.{suffix}"
@@ -844,19 +1110,30 @@ def test_write_custom_suffix(tmp_path, make_func):
 
 
 @pytest.mark.parametrize(
-    "make_func", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_make_custom_suffix(make_func, dna_alpha):
-    aligned = make_func == cogent3_h5seqs.make_aligned
-    suffix = "aligned" if aligned else "unaligned"
+def test_make_custom_suffix(suffix, dna_alpha):
+    make_func = c3h5_make_funcs[suffix]
+    suffix = "unaligned" if suffix.endswith("u") else "aligned"
     obj = make_func("memory", mode="w", suffix=suffix, alphabet=dna_alpha)
     assert obj.filename_suffix == suffix
 
 
 @pytest.mark.parametrize(
-    "make_func", [cogent3_h5seqs.make_aligned, cogent3_h5seqs.make_unaligned]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
-def test_repr(raw_aligned_data, dna_alpha, make_func):
+def test_repr(raw_aligned_data, dna_alpha, suffix):
+    make_func = c3h5_make_funcs[suffix]
     obj = make_func("memory", data=raw_aligned_data, mode="w", alphabet=dna_alpha)
     part = f"alphabet='{''.join(dna_alpha)}'"
     assert part in repr(obj)
@@ -865,7 +1142,7 @@ def test_repr(raw_aligned_data, dna_alpha, make_func):
 def test_set_name_to_hash_no_data():
     h5file = cogent3_h5seqs.open_h5_file("memory", mode="w")
     # this should not fail
-    cogent3_h5seqs._set_name_to_hash(h5file=h5file, name_to_hash=None)  # noqa: SLF001
+    cogent3_h5seqs._set_name_to_hash_to_index(h5file=h5file, name_to_hash=None)  # noqa: SLF001
 
 
 def test_set_name_to_hash_read_only(tmp_path):
@@ -875,19 +1152,23 @@ def test_set_name_to_hash_read_only(tmp_path):
     # now read only
     h5file = cogent3_h5seqs.open_h5_file(h5path, mode="r")
     # this should not fail
-    cogent3_h5seqs._set_name_to_hash(
+    cogent3_h5seqs._set_name_to_hash_to_index(
         h5file=h5file, name_to_hash={"s1": "not really a hash"}
     )
 
 
 @pytest.mark.parametrize(
-    "mk_cls", [cogent3.make_aligned_seqs, cogent3.make_unaligned_seqs]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
 @pytest.mark.parametrize("compression", [True, False])
-def test_toggle_compression_make(mk_cls, compression):
-    storage = (
-        "h5seqs_aligned" if mk_cls == cogent3.make_aligned_seqs else "h5seqs_unaligned"
-    )
+def test_toggle_compression_make(suffix, compression):
+    mk_cls = c3_make_funcs[suffix]
+    storage = suffix
     kwargs = {"compression": compression, "storage_backend": storage}
     exp_compress = "lzf" if compression else None
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
@@ -900,21 +1181,26 @@ def test_toggle_compression_make(mk_cls, compression):
 
 
 @pytest.mark.parametrize(
-    "ld_cls", [cogent3.load_aligned_seqs, cogent3.load_unaligned_seqs]
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
 )
 @pytest.mark.parametrize("compression", [True, False])
-def test_toggle_compression_load(tmp_path, ld_cls, compression):
+def test_toggle_compression_load(tmp_path, suffix, compression):
+    load_cls = c3_load_funcs[suffix]
+
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
     aln = cogent3.make_aligned_seqs(data, moltype="dna")
     outpath = tmp_path / "test.fa"
     aln.write(outpath)
 
-    storage = (
-        "h5seqs_aligned" if ld_cls == cogent3.load_aligned_seqs else "h5seqs_unaligned"
-    )
+    storage = suffix
     kwargs = {"compression": compression, "storage_backend": storage}
     exp_compress = "lzf" if compression else None
-    seqcoll = ld_cls(outpath, moltype="dna", **kwargs)
+    seqcoll = load_cls(outpath, moltype="dna", **kwargs)
     seqhash = seqcoll.storage.get_hash("s1")
     grp = seqcoll.storage._primary_grp
     dataset = f"{grp}/{seqhash}"
@@ -922,28 +1208,106 @@ def test_toggle_compression_load(tmp_path, ld_cls, compression):
     assert record.compression == exp_compress
 
 
-def test_write_aligned_excludes_gaps(tmp_path, small_aligned):
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+    ],
+)
+def test_write_aligned_excludes_gaps(tmp_path, request, suffix):
     # we don't want gaps and ungapped sequences in the output
-    outpath = tmp_path / f"test.{cogent3_h5seqs.ALIGNED_SUFFIX}"
-    _ = small_aligned.get_seq_length(small_aligned.names[0])
-    assert "gaps" in small_aligned.h5file
-    small_aligned.write(outpath)
-    small_aligned.close()
-    got = cogent3_h5seqs.load_seqs_data_aligned(outpath)
+    fixtures = {
+        cogent3_h5seqs.ALIGNED_SUFFIX: "small_aligned",
+        cogent3_h5seqs.SPARSE_SUFFIX: "small_aligned_sparse",
+    }
+    outpath = tmp_path / f"test.{suffix}"
+    obj = request.getfixturevalue(fixtures[suffix])
+    _ = obj.get_seq_length(obj.names[0])
+    obj.write(outpath)
+    obj.close()
+    got = c3h5_load_funcs[suffix](outpath)
     assert got is not None
     assert "gaps" not in got.h5file
 
 
-def test_write_alignment_excludes_gaps(tmp_path, raw_aligned_data):
-    outpath = tmp_path / f"test.{cogent3_h5seqs.ALIGNED_SUFFIX}"
+@pytest.mark.parametrize(
+    "suffix", [cogent3_h5seqs.ALIGNED_SUFFIX, cogent3_h5seqs.SPARSE_SUFFIX]
+)
+def test_write_alignment_excludes_gaps(tmp_path, raw_aligned_data, suffix):
+    outpath = tmp_path / f"test.{suffix}"
+    kwargs = {} if suffix.endswith("a") else {"sparse": True}
     aln = cogent3.make_aligned_seqs(
-        raw_aligned_data, moltype="dna", storage_backend="h5seqs_aligned"
+        raw_aligned_data, moltype="dna", storage_backend="h5seqs_aligned", **kwargs
     )
     # trigger extracting gaps
     _ = aln.seqs["s1"].seq
     assert "gaps" in aln.storage.h5file
     aln.write(outpath)
     del aln
-    got = cogent3_h5seqs.load_seqs_data_aligned(outpath)
+    func = (
+        cogent3_h5seqs.load_seqs_data_aligned
+        if suffix.endswith("a")
+        else cogent3_h5seqs.load_seqs_data_sparse
+    )
+    got = func(outpath)
     assert got is not None
     assert "gaps" not in got.h5file
+
+
+@pytest.mark.parametrize("seqid", ["s1", "s2"])
+def test_sparse_set_get(raw_aligned_data, dna_alpha, seqid):
+    asd = cogent3_h5seqs.SparseSeqsData.from_seqs(
+        data=raw_aligned_data.copy(), alphabet=dna_alpha, sparse=True
+    )
+    got = asd.get_gapped_seq_str(seqid=seqid)
+    expect = raw_aligned_data[seqid]
+    assert got == expect
+
+
+def test_make_sparse_bad_ref(raw_aligned_data, dna_alpha):
+    with pytest.raises(ValueError):
+        c3h5_make_funcs["c3h5s"](
+            "memory",
+            data=raw_aligned_data,
+            alphabet=dna_alpha,
+            ref_name="bad",
+            in_memory=True,
+        )
+
+
+def test_sparse_set_invalid_ref(small_aligned_sparse, tmp_path, dna_alpha):
+    outpath = tmp_path / f"test.{small_aligned_sparse.filename_suffix}"
+    small_aligned_sparse.write(outpath)
+    small_aligned_sparse.close()
+    h5file = cogent3_h5seqs.open_h5_file(outpath, mode="r")
+    with pytest.raises(ValueError):
+        _ = cogent3_h5seqs.SparseSeqsData(
+            gapped_seqs=h5file, alphabet=dna_alpha, ref_name="missing"
+        )
+
+
+def test_duplicate_h5_file_exclude_grp(small_aligned_sparse):
+    # trigger creation of ungapped and gaps groups
+    _ = small_aligned_sparse.get_seq_array(seqid="s2")
+    assert "ungapped" in small_aligned_sparse.h5file
+    dup = cogent3_h5seqs.duplicate_h5_file(
+        h5file=small_aligned_sparse.h5file,
+        path="memory",
+        in_memory=True,
+        exclude_groups={"gaps", "ungapped"},
+    )
+    assert "ungapped" not in dup
+
+
+def test_get_seq_length_with_wout_gaps_present(small_aligned_sparse):
+    # trigger creation of ungapped and gaps groups
+    orig = small_aligned_sparse.get_seq_length(seqid="s2")
+    _ = small_aligned_sparse.get_seq_array(seqid="s2")
+    after = small_aligned_sparse.get_seq_length(seqid="s2")
+    assert orig == after
+
+
+def test_selecting_dtype():
+    with pytest.raises(ValueError):
+        cogent3_h5seqs._best_uint_dtype(2**64 + 10)  # noqa: SLF001
