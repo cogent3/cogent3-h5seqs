@@ -64,14 +64,20 @@ reinstall-package = ["cogent3-h5seqs"]
 
 [project.entry-points."cogent3.storage.unaligned_seqs"]
 h5seqs_unaligned = "cogent3_h5seqs:UnalignedSeqsData"
+c3h5u = "cogent3_h5seqs:UnalignedSeqsData"
 
 [project.entry-points."cogent3.storage.aligned_seqs"]
 h5seqs_aligned = "cogent3_h5seqs:AlignedSeqsData"
+c3h5a = "cogent3_h5seqs:AlignedSeqsData"
+h5seqs_sparse = "cogent3_h5seqs:SparseSeqsData"
+c3h5s = "cogent3_h5seqs:SparseSeqsData"
 
 [project.entry-points."cogent3.parse.sequence"]
 c3h5a = "cogent3_h5seqs:H5SeqsAlignedParser"
+c3h5s = "cogent3_h5seqs:H5SeqsSparseParser"
 c3h5u = "cogent3_h5seqs:H5SeqsUnalignedParser"
 
 [project.entry-points."cogent3.format.sequence"]
 c3h5a = "cogent3_h5seqs:H5AlignedSeqsWriter"
+c3h5s = "cogent3_h5seqs:H5SparseSeqsWriter"
 c3h5u = "cogent3_h5seqs:H5UnalignedSeqsWriter"

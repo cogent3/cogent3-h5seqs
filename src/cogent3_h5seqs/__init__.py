@@ -24,7 +24,8 @@ if typing.TYPE_CHECKING:  # pragma: no cover
 
 UNALIGNED_SUFFIX = "c3h5u"
 ALIGNED_SUFFIX = "c3h5a"
-
+SPARSE_SUFFIX = "c3h5s"
+DEFAULT_COMPRESSION = "lzf"
 
 SeqCollTypes = typing.Union["SequenceCollection", "Alignment"]
 StrORBytesORArray = str | bytes | numpy.ndarray
@@ -34,13 +35,16 @@ SeqIntArrayType = npt.NDArray[numpy.unsignedinteger]
 # for storing large dicts in HDF5
 # for the annotation offset
 offset_dtype = numpy.dtype(
-    [("key", h5py.special_dtype(vlen=bytes)), ("value", numpy.int64)]
+    [("seqid", h5py.special_dtype(vlen=bytes)), ("value", numpy.int64)]
 )
 # for the seqname to seq hash as hex
-seqhash_dtype = numpy.dtype(
-    [("key", h5py.special_dtype(vlen=bytes)), ("value", h5py.special_dtype(vlen=bytes))]
+name2hash2index_dtype = numpy.dtype(
+    [
+        ("seqid", h5py.special_dtype(vlen=bytes)),
+        ("seqhash", h5py.special_dtype(vlen=bytes)),
+        ("index", numpy.int32),
+    ]
 )
-
 
 # HDF5 file modes
 # x and w- mean create file, fail if exists
@@ -117,8 +121,9 @@ def _valid_h5seqs(h5file: h5py.File, main_seq_grp: str) -> bool:
 def _set_group(
     h5file: h5py.File,
     group_name: str,
-    value: NumpyIntArrayType,
+    value: npt.NDArray,
     compression: str | None = None,
+    chunk: bool | None = True,
 ) -> None:
     if group_name in h5file:
         del h5file[group_name]
@@ -126,8 +131,9 @@ def _set_group(
     h5file.create_dataset(
         name=group_name,
         data=value,
-        chunks=True,
+        chunks=chunk or None,
         compression=compression,
+        shuffle=True,
     )
 
 
@@ -142,12 +148,12 @@ def _set_offset(
     data = numpy.array(
         [(k.encode("utf8"), v) for k, v in offset.items() if v], dtype=offset_dtype
     )
-    _set_group(h5file, "offset", data, compression=compression)
+    _set_group(h5file, "offset", data, compression=compression, chunk=False)
 
 
 def _set_reversed_seqs(
     h5file: h5py.File,
-    reverse_seqs: frozenset[str] | None,
+    reverse_seqs: typing.Iterable[str] | None,
     compression: str | None = None,
 ) -> None:
     # set the reverse seqs as a special group
@@ -155,35 +161,65 @@ def _set_reversed_seqs(
         return
 
     data = numpy.array([s.encode("utf8") for s in reverse_seqs], dtype="S")
-    _set_group(h5file, "reversed_seqs", data, compression=compression)
+    _set_group(h5file, "reversed_seqs", data, compression=compression, chunk=False)
 
 
-def _set_name_to_hash(
+def _set_name_to_hash_to_index(
     h5file: h5py.File,
-    name_to_hash: dict[str, str] | None,
+    name_to_hash: dict[str, tuple[str, int]] | None,
     compression: str | None = None,
 ) -> None:
-    # set the name to hash mapping as a special group
+    # set the name to hash and hash to index mappings as a special group
     if not name_to_hash or h5file.mode not in _writeable_modes:
         return
 
+    if "name_to_hash" in h5file:
+        del h5file["name_to_hash"]
+
     # only create a name to hash mapping if there's something to store
     data = numpy.array(
-        [(k.encode("utf8"), v.encode("utf8")) for k, v in name_to_hash.items() if v],
-        dtype=seqhash_dtype,
+        [
+            (k.encode("utf8"), h.encode("utf8"), idx)
+            for k, (h, idx) in name_to_hash.items()
+            if h
+        ],
+        dtype=name2hash2index_dtype,
     )
-    _set_group(h5file, "name_to_hash", data, compression=compression)
+    _set_group(h5file, "name_to_hash", data, compression=compression, chunk=False)
 
 
 def _get_name_to_hash(h5file: h5py.File) -> npt.NDArray | None:
-    return None if "name_to_hash" not in h5file else h5file["name_to_hash"][:]
+    return (
+        None
+        if "name_to_hash" not in h5file
+        else typing.cast("numpy.ndarray", h5file["name_to_hash"])[:]
+    )
 
 
-def _get_name_to_hash_dict(h5file: h5py.File) -> dict[str, str]:
-    n2h = _get_name_to_hash(h5file)
-    if n2h is None:
-        return {}
-    return {k.decode("utf8"): v.decode("utf8") for k, v in n2h}
+def _get_name2hash_hash2idx(h5file: h5py.File) -> tuple[dict[str, str], dict[str, int]]:
+    n2h, h2i = {}, {}
+    n2h2i = _get_name_to_hash(h5file)
+    if n2h2i is not None:
+        for n, h, i in n2h2i:
+            k = h.decode("utf8")
+            n2h[n.decode("utf8")] = k
+            if i >= 0:
+                # exclude refseq which get's assigned a negative index
+                h2i[k] = i
+
+    return n2h, h2i
+
+
+def _best_uint_dtype(index: int) -> numpy.dtype:
+    """
+    Choose the smallest unsigned integer dtype for values in `arr`.
+    """
+    for dt in (numpy.uint8, numpy.uint16, numpy.uint32, numpy.uint64):
+        if index <= numpy.iinfo(dt).max:
+            return numpy.dtype(dt)
+
+    msg = "Value too large for uint64."
+    raise ValueError(msg)
 
 
 def duplicate_h5_file(
@@ -205,7 +241,11 @@ def duplicate_h5_file(
         else:
             # have to do this explicitly, or we get a segfault
             result.create_dataset(
-                name=name, data=data[:], dtype=data.dtype, compression=compression
+                name=name,
+                data=typing.cast("numpy.ndarray", data)[:],
+                dtype=data.dtype,
+                compression=compression,
+                shuffle=True,
             )
 
     for attr in h5file.attrs:
@@ -221,14 +261,14 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         self,
         *,
         data: h5py.File,
-        alphabet: c3_alphabet.AlphabetABC,
+        alphabet: c3_alphabet.CharAlphabet,
         offset: dict[str, int] | None = None,
         check: bool = False,
-        reversed_seqs: frozenset[str] | None = None,
+        reversed_seqs: set[str] | frozenset[str] | None = None,
         compression: bool = True,
     ) -> None:
-        self._compress = "lzf" if compression else None
-        self._alphabet: c3_alphabet.AlphabetABC = alphabet
+        self._compress = DEFAULT_COMPRESSION if compression else None
+        self._alphabet: c3_alphabet.CharAlphabet = alphabet
         self._file: h5py.File = data
         self._primary_grp: str = self._ungapped_grp
 
@@ -238,6 +278,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _set_offset(self._file, offset=offset, compression=self._compress)
         self._attr_set: bool = False
         self._name_to_hash: dict[str, str] = {}
+        self._hash_to_index: dict[str, int] = {}
         if check:
             self._check_file(self._file)
 
@@ -248,7 +289,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         attr_vals.extend(
             f"{attr}={self._file.attrs[attr]!r}" for attr in self._file.attrs
         )
-        n2h = _get_name_to_hash_dict(self._file)
+        n2h, _ = _get_name2hash_hash2idx(self._file)
         parts = ", ".join(attr_vals)
         return f"{name}({parts}, num_seqs={len(n2h)})"
 
@@ -265,8 +306,33 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "alphabet", "".join(self._alphabet))
         _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char)
         _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
-        _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
+        _assign_attr_if_missing(
+            data, "moltype", getattr(self._alphabet.moltype, "name", None)
+        )
         self._attr_set = True
+
+    def _populate_optional_grps(
+        self,
+        offset: dict[str, int] | None,
+        reversed_seqs: frozenset[str] | None,
+        name_to_hash: dict[str, str],
+        hash_to_index: dict[str, int],
+    ) -> None:
+        # we always compress these as they tend be loaded in one go
+        if offset := offset or {}:
+            _set_offset(
+                self._file, offset=self.offset | offset, compression=DEFAULT_COMPRESSION
+            )
+
+        reversed_seqs = reversed_seqs or frozenset()
+        _set_reversed_seqs(self._file, reversed_seqs, compression=DEFAULT_COMPRESSION)
+        _set_name_to_hash_to_index(
+            self._file,
+            {k: (h, hash_to_index.get(h, -1)) for k, h in name_to_hash.items()},
+            compression=DEFAULT_COMPRESSION,
+        )
+        self._name_to_hash |= name_to_hash
+        self._hash_to_index |= hash_to_index
 
     @property
     def filename_suffix(self) -> str:
@@ -309,7 +375,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         try:
             self._file.attrs[attr_name] = attr_value
         except TypeError as e:
-            msg = f"Cannot set attribute {attr_name!r} to {attr_value!r} with type {type(attr_value)=}"
+            msg = (
+                f"Cannot set attribute {attr_name!r} to {attr_value!r} with "
+                f"type {type(attr_value)=}"
+            )
             raise TypeError(msg) from e
 
     def get_attr(self, attr_name: str) -> str:
@@ -380,7 +449,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def __contains__(self, seqid: str) -> bool:
         """seqid in self"""
         if not self._name_to_hash:
-            self._name_to_hash = _get_name_to_hash_dict(self._file)
+            n2h, h2i = _get_name2hash_hash2idx(self._file)  # populates if empty
+            self._name_to_hash = n2h
+            self._hash_to_index = h2i
         return seqid in self._name_to_hash
 
     @functools.singledispatchmethod
@@ -400,13 +471,13 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return len(self.names)
 
     @property
-    def alphabet(self) -> c3_alphabet.AlphabetABC:
+    def alphabet(self) -> c3_alphabet.CharAlphabet:
         return self._alphabet
 
     @property
     def names(self) -> tuple[str, ...]:
         n2h = _get_name_to_hash(self._file)
-        return tuple(n2h["key"].astype(str).tolist()) if n2h is not None else ()
+        return tuple(n2h["seqid"].astype(str).tolist()) if n2h is not None else ()
 
     @property
     def offset(self) -> dict[str, int]:
@@ -427,32 +498,37 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def _make_new_h5_file(
         self,
-        data: h5py.File,
+        data: h5py.File | None,
         alphabet: c3_alphabet.CharAlphabet | None,
         offset: dict[str, int] | None,
-        reversed_seqs: set[str] | None,
-    ) -> tuple[h5py.File, c3_alphabet.CharAlphabet, dict[str, int], set[str]]:
-        if data is None:
-            data = duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
+        reversed_seqs: set[str] | frozenset[str] | None,
+    ) -> tuple[
+        h5py.File, c3_alphabet.CharAlphabet, dict[str, int] | None, frozenset[str]
+    ]:
+        datafile: h5py.File = (
+            duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
+            if data is None
+            else data
+        )
         alphabet = alphabet or self.alphabet
 
-        reversed_seqs = reversed_seqs or self.reversed_seqs
+        reversed_seqs = frozenset(reversed_seqs or self.reversed_seqs)
         if alphabet and alphabet != self.alphabet:
-            data.attrs["alphabet"] = "".join(alphabet)
-            data.attrs["moltype"] = alphabet.moltype.name
+            datafile.attrs["alphabet"] = "".join(alphabet)
+            datafile.attrs["moltype"] = getattr(alphabet.moltype, "name", None)
 
         if offset := offset or self.offset:
-            _set_offset(data, offset=offset, compression=self._compress)
-        _set_reversed_seqs(data, reversed_seqs, compression=self._compress)
+            _set_offset(datafile, offset=offset, compression=self._compress)
+        _set_reversed_seqs(datafile, reversed_seqs, compression=self._compress)
 
-        return data, alphabet, offset, reversed_seqs
+        return datafile, alphabet, offset, reversed_seqs
 
     def copy(
         self,
         data: h5py.File | None = None,
         alphabet: c3_alphabet.CharAlphabet | None = None,
         offset: dict[str, int] | None = None,
-        reversed_seqs: set[str] | None = None,
+        reversed_seqs: set[str] | frozenset[str] | None = None,
     ) -> typing_extensions.Self:
         data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
             data=data,
@@ -468,12 +544,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             check=False,
         )
 
-    def to_alphabet(
-        self,
-        alphabet: c3_alphabet.AlphabetABC,
-        check_valid: bool = True,
-    ) -> typing_extensions.Self:
-        if (
+    def _compatible_alphabet(self, alphabet: c3_alphabet.CharAlphabet) -> bool:
+        return (
             len(self.alphabet) == len(alphabet)
             and len(
                 {
@@ -483,22 +555,29 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
                 },
             )
             == 1
-        ):
-            # rna <-> dna swap just replace alphabet
-            return self.copy(alphabet=alphabet)
+        )
+
+    def to_alphabet(
+        self,
+        alphabet: c3_alphabet.AlphabetABC,
+        check_valid: bool = True,
+    ) -> "UnalignedSeqsData":
+        alpha = typing.cast("c3_alphabet.CharAlphabet", alphabet)
+        if self._compatible_alphabet(alpha):
+            return self.copy(alphabet=alpha)
 
         new_data = {}
         for seqid in self.names:
             seq_data = self.get_seq_array(seqid=seqid)
             as_new_alpha = self.alphabet.convert_seq_array_to(
                 seq=seq_data,
-                alphabet=alphabet,
+                alphabet=alpha,
                 check_valid=False,
             )
-            if check_valid and not alphabet.is_valid(as_new_alpha):
+            if check_valid and not alpha.is_valid(as_new_alpha):
                 msg = (
                     f"Changing from old alphabet={self.alphabet} to new "
-                    f"{alphabet=} is not valid for this data"
+                    f"{alpha=} is not valid for this data"
                 )
                 raise c3_alphabet.AlphabetError(
                     msg,
@@ -515,13 +594,21 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             reversed_seqs=self.reversed_seqs,
         )
 
+    def _add_seq(self, seqhash: str, seqarray: SeqIntArrayType) -> None:
+        self._file.create_dataset(
+            name=f"{self._primary_grp}/{seqhash}",
+            data=seqarray,
+            compression=self._compress,
+            shuffle=True,
+        )
+
     def add_seqs(
         self,
         seqs: dict[str, StrORBytesORArray],
         force_unique_keys: bool = True,
         offset: dict[str, int] | None = None,
         reversed_seqs: frozenset[str] | None = None,
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         """Returns self with added sequences
 
         Parameters
@@ -539,8 +626,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise PermissionError(msg)
 
         self._populate_attrs()
-
-        name_to_hash = _get_name_to_hash_dict(self._file)
+        n2h, _ = _get_name2hash_hash2idx(self._file)
+        name_to_hash = self._name_to_hash | n2h
         overlap = name_to_hash.keys() & seqs.keys()
         if force_unique_keys and overlap:
             msg = f"{overlap} already exist in collection"
@@ -554,28 +641,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             if overlap and seqid in overlap:
                 continue
 
-            seqarray = self.alphabet.to_indices(seq)
+            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
             seqhash = array_hash64(seqarray)
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
                 # same seq, different name
                 continue
             seqhash_to_names[seqhash].append(seqid)
-            self._file.create_dataset(
-                name=f"{self._primary_grp}/{seqhash}",
-                data=seqarray,
-                compression=self._compress,
-            )
+            self._add_seq(seqhash=seqhash, seqarray=seqarray)
 
-        if offset := offset or {}:
-            _set_offset(
-                self._file, offset=self.offset | offset, compression=self._compress
-            )
-
-        reversed_seqs = reversed_seqs or frozenset()
-        _set_reversed_seqs(self._file, reversed_seqs, compression=self._compress)
-
-        _set_name_to_hash(self._file, name_to_hash, compression=self._compress)
+        self._populate_optional_grps(offset, reversed_seqs, name_to_hash, {})
         return self
 
     def get_seq_array(
@@ -649,7 +724,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         data,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         # make in memory
         path = kwargs.pop("storage_path", "memory")
         kwargs = {"mode": "w"} | kwargs
@@ -666,7 +741,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         seqcoll: c3_alignment.SequenceCollection,
         path: str | pathlib.Path | None = None,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
         if type(seqcoll) is not c3_alignment.SequenceCollection:
             msg = f"Expected seqcoll to be an instance of SequenceCollection, got {type(seqcoll).__name__!r}"
@@ -691,7 +766,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     @classmethod
     def from_file(
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
             chars=h5file.attrs.get("alphabet"),
@@ -788,12 +863,18 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         if seqid not in self.names:
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
-        if seqid not in self._ungapped_grp:
-            self._make_gaps_and_ungapped(seqid)
-        return typing.cast(
-            "numpy.ndarray",
-            self._file[f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"],
-        ).shape[0]
+        seqhash = self.get_hash(seqid=seqid)
+        if seqhash in self._file.get(self._ungapped_grp, {}):
+            return typing.cast(
+                "numpy.ndarray",
+                self._file[f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"],
+            ).shape[0]
+
+        seqarray = self.get_gapped_seq_array(seqid=seqid)
+        nongaps = seqarray != self.alphabet.gap_index
+        if self.alphabet.missing_index is not None:
+            nongaps |= seqarray != self.alphabet.missing_index
+        return nongaps.sum()
 
     @classmethod
     def from_seqs(
@@ -802,7 +883,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data: dict[str, StrORBytesORArray],
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """Construct an AlignedSeqsData object from a dict of aligned sequences
 
         Parameters
@@ -816,7 +897,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         # need to support providing a path
         path = kwargs.pop("storage_path", "memory")
         kwargs = {"mode": "w"} | kwargs
-        return make_aligned(path, data=data, alphabet=alphabet, **kwargs)
+        maker = _aligned_makers[cls]
+        return maker(path, data=data, alphabet=alphabet, **kwargs)
 
     @classmethod
     def from_names_and_array(
@@ -826,7 +908,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data: SeqIntArrayType,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         if len(names) != data.shape[0] or not len(names):
             msg = "Number of names must match number of rows in data."
             raise ValueError(msg)
@@ -834,7 +916,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data = {name: data[i] for i, name in enumerate(names)}
         path = kwargs.pop("storage_path", None)
         mode = kwargs.pop("mode", "w")
-        return make_aligned(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
+        maker = _aligned_makers[cls]
+        return maker(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
 
     @classmethod
     def from_seqs_and_gaps(
@@ -844,7 +927,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         gaps: dict[str, SeqIntArrayType],
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         data = {}
         for seqid, seq in seqs.items():
             gp = gaps[seqid]
@@ -857,7 +940,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
         path = kwargs.pop("storage_path", None)
         mode = kwargs.pop("mode", "w")
-        return make_aligned(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
+        maker = _aligned_makers[cls]
+        return maker(path, data=data, alphabet=alphabet, mode=mode, **kwargs)
 
     @classmethod
     def from_storage(
@@ -865,7 +949,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         seqcoll: c3_alignment.Alignment,
         path: str | pathlib.Path | None = None,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """convert a cogent3 AlignedSeqsDataABC into AlignedSeqsData"""
         if type(seqcoll) is not c3_alignment.Alignment:
             msg = f"Expected seqcoll to be an instance of Alignment, got {type(seqcoll).__name__!r}"
@@ -890,7 +974,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @classmethod
     def from_file(
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
             chars=h5file.attrs.get("alphabet"),
@@ -902,11 +986,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def _make_gaps_and_ungapped(self, seqid: str) -> None:
         seqhash = self.get_hash(seqid=seqid)
-        if seqhash in self._file.get(self._gaps_grp, {}) and seqhash in self._file.get(
-            self._ungapped_grp, {}
-        ):
-            # job already done
-            return
+        if seqhash is None:
+            msg = f"Sequence {seqid!r} not found"
+            raise KeyError(msg)
 
         ungapped, gaps = c3_alignment.decompose_gapped_seq(
             self.get_gapped_seq_array(seqid=seqid),
@@ -917,12 +999,14 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             data=gaps,
             chunks=True,
             compression=self._compress,
+            shuffle=True,
         )
         self._file.create_dataset(
             name=f"{self._ungapped_grp}/{seqhash}",
             data=ungapped,
             chunks=True,
             compression=self._compress,
+            shuffle=True,
         )
 
     def _get_gaps(self, seqid: str) -> NumpyIntArrayType:
@@ -935,6 +1019,32 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def get_gaps(self, seqid: str) -> NumpyIntArrayType:
         return self._get_gaps(seqid)
+
+    def get_seq_array(
+        self,
+        *,
+        seqid: str,
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> SeqIntArrayType:
+        """Returns the sequence as a numpy array of indices"""
+        if seqid in self and self.get_hash(seqid) not in self._file.get(
+            self._gaps_grp, {}
+        ):
+            self._make_gaps_and_ungapped(seqid)
+        return super().get_seq_array(seqid=seqid, start=start, stop=stop, step=step)
+
+    def _get_gapped_seq_array(
+        self,
+        seqid: str,
+        start: int,
+        stop: int,
+        step: int,
+    ) -> SeqIntArrayType:
+        seqhash = self.get_hash(seqid=seqid)
+        dataset_name = f"{self._gapped_grp}/{seqhash}"
+        return typing.cast("numpy.ndarray", self._file[dataset_name])[start:stop:step]
 
     def get_gapped_seq_array(
         self,
@@ -949,9 +1059,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         if start < 0 or stop < 0 or step < 1:
             msg = f"{start=}, {stop=}, {step=} not >= 1"
             raise ValueError(msg)
-        seqhash = self.get_hash(seqid=seqid)
-        dataset_name = f"{self._gapped_grp}/{seqhash}"
-        return typing.cast("numpy.ndarray", self._file[dataset_name])[start:stop:step]
+        return self._get_gapped_seq_array(
+            seqid=seqid, start=start, stop=stop, step=step
+        )
 
     def get_gapped_seq_str(
         self,
@@ -1031,12 +1141,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             dtype=self.alphabet.dtype,
         )
         names = tuple(name_map.values())
-        name_to_hash = self._name_to_hash
         for i, name in enumerate(names):
-            seqhash = name_to_hash[name]
-            seq_array[i] = typing.cast(
-                "numpy.ndarray", self._file[f"{self._gapped_grp}/{seqhash}"]
-            )[:]
+            seq_array[i] = self.get_gapped_seq_array(seqid=name)
         seq_array = seq_array[:, start:stop:step]
         # now exclude gaps and missing
         seqs = {}
@@ -1062,7 +1168,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         offset: dict[str, int] | None = None,
         reversed_seqs: frozenset[str] | None = None,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """Returns same object with added sequences.
 
         Parameters
@@ -1094,8 +1200,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data: h5py.File | None = None,
         alphabet: c3_alphabet.CharAlphabet | None = None,
         offset: dict[str, int] | None = None,
-        reversed_seqs: set[str] | None = None,
-    ) -> typing_extensions.Self:
+        reversed_seqs: set[str] | frozenset[str] | None = None,
+    ) -> "AlignedSeqsData":
         data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
             data=data,
             alphabet=alphabet,
@@ -1112,23 +1218,12 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def to_alphabet(
         self,
-        alphabet: c3_alphabet.AlphabetABC,
+        alphabet: c3_alphabet.CharAlphabet,
         check_valid: bool = True,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """Returns a new AlignedSeqsData object with the same underlying data
         with a new alphabet."""
-        if (
-            len(alphabet) == len(self.alphabet)
-            and len(
-                {
-                    (a, b)
-                    for a, b in zip(self.alphabet, alphabet, strict=False)
-                    if a != b
-                },
-            )
-            == 1
-        ):
-            # special case where mapping between dna and rna
+        if self._compatible_alphabet(alphabet):
             return self.copy(alphabet=alphabet)
 
         gapped = {}
@@ -1157,11 +1252,313 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
 
     def write(self, path: str | pathlib.Path) -> None:
-        """Write the UnalignedSeqsData object to a file"""
+        """Write the AlignedSeqsData object to a file"""
+        path = pathlib.Path(path)
         if path.suffix != f".{self.filename_suffix}":
             msg = f"path {path} does not have the expected suffix '.{self.filename_suffix}'"
             raise ValueError(msg)
         self._write(path=path, exclude_groups={self._ungapped_grp, self._gaps_grp})
+
+
+def _get_indices_diffs(
+    ref_seq: SeqIntArrayType, seqarray: SeqIntArrayType
+) -> tuple[NumpyIntArrayType, SeqIntArrayType]:
+    diff_indices = numpy.where(ref_seq != seqarray)[0]
+    diffs = seqarray[diff_indices]
+    return diff_indices, diffs
+
+
+def _get_diff_indices_vals_for_index(
+    *,
+    index: int,
+    all_indices: NumpyIntArrayType,
+    all_values: SeqIntArrayType,
+    row_ptrs: NumpyIntArrayType,
+) -> tuple[NumpyIntArrayType, SeqIntArrayType]:
+    start, stop = row_ptrs[index], row_ptrs[index + 1]
+    return all_indices[start:stop], all_values[start:stop]
+
+
+def _inflate_seq(
+    *,
+    index: int,
+    ref_seq: SeqIntArrayType,
+    all_indices: NumpyIntArrayType,
+    all_values: SeqIntArrayType,
+    row_ptrs: NumpyIntArrayType,
+) -> SeqIntArrayType:
+    idx, vals = _get_diff_indices_vals_for_index(
+        index=index, all_indices=all_indices, all_values=all_values, row_ptrs=row_ptrs
+    )
+    seqarray = ref_seq.copy()
+    seqarray[idx] = vals
+    return seqarray
+
+
+class SparseSeqsData(AlignedSeqsData):
+    """sparse alignment data"""
+
+    _seqhash_grp: str = "seqhashes"
+    _gapped_grp: str = "gapped"
+    _diff_idx_grp: str = "diff_indices"
+    _diff_val_grp: str = "diff_vals"
+    _seq_ptr_grp: str = "seq_ptrs"
+    _ungapped_grp: str = "ungapped"
+    _gaps_grp: str = "gaps"
+    _suffix: str = SPARSE_SUFFIX
+
+    def __init__(
+        self,
+        *,
+        gapped_seqs: h5py.File,
+        alphabet: c3_alphabet.AlphabetABC,
+        offset: dict[str, int] | None = None,
+        check: bool = True,
+        reversed_seqs: frozenset[str] | None = None,
+        compression: bool = True,
+        ref_name: str = "",
+        **kwargs: dict[str, typing.Any],  # noqa: ARG002
+    ) -> None:
+        super().__init__(
+            gapped_seqs=gapped_seqs,
+            alphabet=alphabet,
+            offset=offset,
+            check=check,
+            reversed_seqs=reversed_seqs,
+            compression=compression,
+        )
+        stored_ref_name = gapped_seqs.attrs.get("ref_name", "")
+        if stored_ref_name and ref_name and stored_ref_name != ref_name:
+            msg = f"Reference name {ref_name!r} does not match existing attribute {stored_ref_name!r}"
+            raise ValueError(msg)
+
+        self._primary_grp = self._gapped_grp
+        self._ref_name = stored_ref_name or ref_name
+        self._ref_hash: str = gapped_seqs.attrs.get("ref_hash", "")
+        self._seqhashes: dict[str, int] = {}
+        self._ref_seq: SeqIntArrayType | None = None
+        self._seq_ptrs: NumpyIntArrayType | None = None
+        self._attr_from_file()
+
+    def _attr_from_file(self) -> None:
+        if not self._ref_hash:
+            return
+
+        self._ref_seq = typing.cast(
+            "SeqIntArrayType", self._file[f"{self._primary_grp}/{self._ref_hash}"]
+        )[:]
+        self._seq_ptrs = typing.cast(
+            "NumpyIntArrayType", self._file[f"{self._seq_ptr_grp}"]
+        )[:]
+        n2h, h2i = _get_name2hash_hash2idx(self._file)
+        self._name_to_hash = n2h
+        self._hash_to_index = h2i
+
+    def _set_ref_seq(self, ref_name: str, ref_seq: SeqIntArrayType) -> str:
+        self._ref_name = ref_name
+        _assign_attr_if_missing(self._file, "ref_name", ref_name)
+        self._ref_seq = typing.cast(
+            "SeqIntArrayType", self.alphabet.to_indices(ref_seq)
+        )
+        self._ref_hash = array_hash64(self._ref_seq)
+        _assign_attr_if_missing(self._file, "ref_hash", self._ref_hash)
+        dataset = f"{self._primary_grp}/{self._ref_hash}"
+        self._file.create_dataset(
+            name=dataset,
+            data=self._ref_seq,
+            chunks=True,
+            compression=self._compress,
+            shuffle=True,
+        )
+        self._name_to_hash[ref_name] = self._ref_hash
+        return self._ref_hash
+
+    @property
+    def align_len(self) -> int:
+        """length of the alignment"""
+        if not self.names:
+            return 0
+        return typing.cast(
+            "numpy.ndarray",
+            self._file[f"{self._gapped_grp}/{self._ref_hash}"],
+        ).shape[0]
+
+    def add_seqs(
+        self,
+        seqs: dict[str, StrORBytesORArray],
+        force_unique_keys: bool = True,
+        offset: dict[str, int] | None = None,
+        reversed_seqs: frozenset[str] | None = None,
+        ref_name: str = "",
+        **kwargs: dict[str, typing.Any],
+    ) -> "UnalignedSeqsData":
+        lengths = {len(seq) for seq in seqs.values()}
+        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+            msg = f"not all lengths equal {lengths=}"
+            raise ValueError(msg)
+
+        if not self.writable:
+            msg = "Cannot add sequences to a read-only file"
+            raise PermissionError(msg)
+
+        if self._ref_name and ref_name and ref_name != self._ref_name:
+            msg = f"provided {ref_name!r} does not match existing {self._ref_name!r}"
+            raise ValueError(msg)
+
+        ref_name = self._ref_name or ref_name
+
+        if not self._ref_hash:
+            self._populate_attrs()
+
+            if ref_name and ref_name not in self and ref_name not in seqs:
+                msg = f"no seqs matching {ref_name!r}"
+                raise ValueError(msg)
+
+            ref_name = ref_name or next(iter(seqs))
+
+            ref_seq = typing.cast(
+                "SeqIntArrayType", self.alphabet.to_indices(seqs.pop(ref_name))
+            )
+            self._name_to_hash = {ref_name: self._set_ref_seq(ref_name, ref_seq)}
+
+        n2h, h2i = _get_name2hash_hash2idx(self._file)
+        name_to_hash = self._name_to_hash | n2h
+        hash_to_index = self._hash_to_index | h2i
+
+        overlap = name_to_hash.keys() & seqs.keys()
+        if force_unique_keys and overlap:
+            msg = f"{overlap} already exist in collection"
+            raise ValueError(msg)
+
+        seqhash_to_names: dict[str, list[str]] = collections.defaultdict(list)
+        for seqid, seqhash in name_to_hash.items():
+            seqhash_to_names[seqhash].append(seqid)
+
+        diff_indices = []
+        diff_vals = []
+        seqhashes = []  # non-refseq hashes
+        max_index = 0
+        for seqid, seq in seqs.items():
+            if overlap and seqid in overlap:
+                continue
+
+            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
+            seqhash = array_hash64(seqarray)
+            name_to_hash[seqid] = seqhash
+            if seqhash in seqhash_to_names:
+                # same seq, different name
+                continue
+            hash_to_index[seqhash] = len(hash_to_index)
+            seqhash_to_names[seqhash].append(seqid)
+            seqhashes.append(seqhash)
+            indices, diffs = _get_indices_diffs(
+                typing.cast("SeqIntArrayType", self._ref_seq), seqarray
+            )
+            max_index = max(max_index, indices.max())
+            diff_indices.append(indices)
+            diff_vals.append(diffs)
+
+        if not diff_indices:
+            # no unique sequences
+            self._populate_optional_grps(
+                offset, reversed_seqs, name_to_hash, hash_to_index
+            )
+            return self
+
+        # how to handle case where there are already stored diffs etc...?
+        min_dtype = _best_uint_dtype(max_index)
+        all_indices = numpy.concatenate(diff_indices).astype(min_dtype)
+        all_vals = numpy.concatenate(diff_vals).astype(numpy.uint8)
+        row_ptrs = numpy.cumsum([0] + [len(d) for d in diff_indices], dtype=numpy.int32)
+        self._seq_ptrs = row_ptrs
+        self._file.create_dataset(
+            self._diff_idx_grp,
+            data=all_indices,
+            compression=self._compress,
+            shuffle=True,
+        )
+        self._file.create_dataset(
+            self._diff_val_grp, data=all_vals, compression=self._compress, shuffle=True
+        )
+        self._file.create_dataset(
+            self._seq_ptr_grp, data=row_ptrs, compression=self._compress, shuffle=True
+        )
+        if offset := offset or {}:
+            _set_offset(
+                self._file,
+                offset=self.offset | offset,
+                compression=self._compress,
+            )
+
+        self._populate_optional_grps(offset, reversed_seqs, name_to_hash, hash_to_index)
+        return self
+
+    def _get_gapped_seq_array(
+        self,
+        seqid: str,
+        start: int,
+        stop: int,
+        step: int,
+    ) -> SeqIntArrayType:
+        seqhash = self.get_hash(seqid=seqid)
+        if seqhash is None:
+            msg = f"seqid {seqid!r} not found"
+            raise KeyError(msg)
+
+        if seqhash == self._ref_hash:
+            return typing.cast("SeqIntArrayType", self._ref_seq)[start:stop:step]
+
+        index = self._hash_to_index[seqhash]
+        seqarray = _inflate_seq(
+            index=index,
+            ref_seq=self._ref_seq,
+            all_indices=self._file[self._diff_idx_grp][:],
+            all_values=self._file[self._diff_val_grp][:],
+            row_ptrs=self._seq_ptrs,
+        )
+        return seqarray[start:stop:step]
+
+    def get_positions(
+        self,
+        names: list[str],
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> SeqIntArrayType:
+        start = start or 0
+        stop = stop or self.align_len
+        step = step or 1
+        if start < 0 or stop < 0 or step < 1:
+            msg = f"{start=}, {stop=}, {step=} not >= 1"
+            raise ValueError(msg)
+
+        if missing := set(names) - set(self.names):
+            msg = f"Some sequences not found: {missing}"
+            raise KeyError(msg)
+
+        # we don't apply step yet to make applying diffs more efficient
+        array_seqs = numpy.tile(
+            typing.cast("SeqIntArrayType", self._ref_seq)[start:stop], (len(names), 1)
+        )
+        for index, name in enumerate(names):
+            if name == self._ref_name:
+                continue
+            seq_ptr_idx = self._hash_to_index[self._name_to_hash[name]]
+            indices, diffs = _get_diff_indices_vals_for_index(
+                index=seq_ptr_idx,
+                all_indices=self._file[self._diff_idx_grp][:],
+                all_values=self._file[self._diff_val_grp][:],
+                row_ptrs=self._seq_ptrs,
+            )
+            # select the indices and vals within start-stop
+            within_range = (indices >= start) & (indices < stop)
+            # adjust indices for the new start
+            indices = indices[within_range] - start
+            diffs = diffs[within_range]
+            array_seqs[index, indices] = diffs
+        if step > 1:
+            array_seqs = array_seqs[:, ::step]
+        return array_seqs
 
 
 @functools.singledispatch
@@ -1296,7 +1693,9 @@ def make_aligned(
     check: bool = False,
     suffix: str = ALIGNED_SUFFIX,
     compression: bool = True,
-) -> AlignedSeqsData:
+    ref_name: str = "",
+    sparse: bool = False,
+) -> AlignedSeqsData | SparseSeqsData:
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
         msg = "alphabet must be provided for write mode"
@@ -1311,18 +1710,31 @@ def make_aligned(
             moltype=mt,
         )
     check = h5file.mode == "r" if check is None else check
-    asd = AlignedSeqsData(
+    cls = SparseSeqsData if sparse else AlignedSeqsData
+    kwargs = {"ref_name": ref_name} if sparse else {}
+    asd = cls(
         gapped_seqs=h5file,
         check=check,
         alphabet=alphabet,
         offset=offset,
         reversed_seqs=reversed_seqs,
         compression=compression,
+        **kwargs,
     )
+
     asd.filename_suffix = suffix
     if data is not None:
         _ = asd.add_seqs(seqs=data, offset=offset, reversed_seqs=reversed_seqs)
     return asd
+
+
+def make_sparse(*args, **kwargs) -> SparseSeqsData:
+    kwargs["sparse"] = True
+    kwargs["suffix"] = kwargs.get("suffix", SPARSE_SUFFIX)
+    return make_aligned(*args, **kwargs)
+
+
+_aligned_makers = {AlignedSeqsData: make_aligned, SparseSeqsData: make_sparse}
 
 
 def load_seqs_data_unaligned(
@@ -1360,18 +1772,38 @@ def load_seqs_data_aligned(
     return result
 
 
+def load_seqs_data_sparse(
+    path: str | pathlib.Path,
+    mode: str = "r",
+    check: bool = True,
+    suffix: str = SPARSE_SUFFIX,
+) -> SparseSeqsData:
+    """load hdf5 aligned sequence data from file"""
+    path = pathlib.Path(path)
+    if path.suffix != f".{suffix}":
+        msg = f"File {path} does not have an expected suffix {suffix!r}"
+        raise ValueError(msg)
+    klass = SparseSeqsData
+
+    result = klass.from_file(path=path, mode=mode, check=check)
+    result.filename_suffix = suffix
+    return result
+
+
 def write_seqs_data(
     *,
     path: pathlib.Path,
     seqcoll: SeqCollTypes,
     unaligned_suffix: str = UNALIGNED_SUFFIX,
     aligned_suffix: str = ALIGNED_SUFFIX,
+    sparse_suffix: str = SPARSE_SUFFIX,
     **kwargs,
 ) -> pathlib.Path:
     path = pathlib.Path(path)
     supported_suffixes = {
         aligned_suffix: c3_alignment.Alignment,
         unaligned_suffix: c3_alignment.SequenceCollection,
+        sparse_suffix: c3_alignment.Alignment,
     }
     suffix = path.suffix[1:]
     if suffix not in supported_suffixes:
@@ -1386,7 +1818,7 @@ def write_seqs_data(
     # this will be names of collection and storage are not equal
     # slice_record of Alignment is not generic
 
-    if isinstance(seqcoll.storage, AlignedSeqsData):
+    if isinstance(seqcoll.storage, AlignedSeqsData | SparseSeqsData):
         # we want aligned data to remain compact
         no_gap_data = "gaps" not in seqcoll.storage.h5file
     else:
@@ -1395,7 +1827,9 @@ def write_seqs_data(
     if (
         no_gap_data
         and not seqcoll.modified
-        and isinstance(seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData))
+        and isinstance(
+            seqcoll.storage, (UnalignedSeqsData, AlignedSeqsData | SparseSeqsData)
+        )
     ):
         storage = seqcoll.storage
         storage.h5file.flush()
@@ -1456,7 +1890,7 @@ class H5SeqsUnalignedParser(SequenceParserBase):
 class H5SeqsAlignedParser(SequenceParserBase):
     @property
     def name(self) -> str:
-        return "c3h5a"
+        return ALIGNED_SUFFIX
 
     @property
     def supports_unaligned(self) -> bool:
@@ -1479,14 +1913,30 @@ class H5SeqsAlignedParser(SequenceParserBase):
     @property
     def loader(
         self,
-    ) -> typing.Callable[[pathlib.Path], UnalignedSeqsData | AlignedSeqsData]:
+    ) -> typing.Callable[[pathlib.Path], AlignedSeqsData]:
         return load_seqs_data_aligned
+
+
+class H5SeqsSparseParser(H5SeqsAlignedParser):
+    @property
+    def name(self) -> str:
+        return SPARSE_SUFFIX
+
+    @property
+    def supported_suffixes(self) -> set[str]:
+        return {SPARSE_SUFFIX}
+
+    @property
+    def loader(
+        self,
+    ) -> typing.Callable[[pathlib.Path], SparseSeqsData]:
+        return load_seqs_data_sparse
 
 
 class H5UnalignedSeqsWriter(SequenceWriterBase):
     @property
     def name(self) -> str:
-        return "c3h5u"
+        return UNALIGNED_SUFFIX
 
     @property
     def supports_unaligned(self) -> bool:
@@ -1521,7 +1971,7 @@ class H5UnalignedSeqsWriter(SequenceWriterBase):
 class H5AlignedSeqsWriter(H5UnalignedSeqsWriter):
     @property
     def name(self) -> str:
-        return "c3h5a"
+        return ALIGNED_SUFFIX
 
     @property
     def supports_unaligned(self) -> bool:
@@ -1536,3 +1986,37 @@ class H5AlignedSeqsWriter(H5UnalignedSeqsWriter):
     @property
     def supported_suffixes(self) -> set[str]:
         return {ALIGNED_SUFFIX}
+
+
+class H5SparseSeqsWriter(H5UnalignedSeqsWriter):
+    @property
+    def name(self) -> str:
+        return SPARSE_SUFFIX
+
+    @property
+    def supports_unaligned(self) -> bool:
+        """True if the loader supports unaligned sequences"""
+        return False
+
+    @property
+    def supports_aligned(self) -> bool:
+        """True if the loader supports aligned sequences"""
+        return True
+
+    @property
+    def supported_suffixes(self) -> set[str]:
+        return {SPARSE_SUFFIX}
+
+    def write(
+        self,
+        *,
+        path: pathlib.Path,
+        seqcoll: SeqCollTypes,
+        **kwargs,
+    ) -> pathlib.Path:
+        return super().write(
+            path=path,
+            seqcoll=seqcoll,
+            sparse=True,
+            **kwargs,
+        )
