@@ -838,12 +838,18 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         if seqid not in self.names:
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
-        if seqid not in self._ungapped_grp:
-            self._make_gaps_and_ungapped(seqid)
-        return typing.cast(
-            "numpy.ndarray",
-            self._file[f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"],
-        ).shape[0]
+        seqhash = self.get_hash(seqid=seqid)
+        if seqhash in self._file.get(self._ungapped_grp, {}):
+            return typing.cast(
+                "numpy.ndarray",
+                self._file[f"{self._ungapped_grp}/{self.get_hash(seqid=seqid)}"],
+            ).shape[0]
+
+        seqarray = self.get_gapped_seq_array(seqid=seqid)
+        nongaps = seqarray != self.alphabet.gap_index
+        if self.alphabet.missing_index is not None:
+            nongaps |= seqarray != self.alphabet.missing_index
+        return nongaps.sum()
 
     @classmethod
     def from_seqs(
@@ -952,11 +958,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def _make_gaps_and_ungapped(self, seqid: str) -> None:
         seqhash = self.get_hash(seqid=seqid)
-        if seqhash in self._file.get(self._gaps_grp, {}) and seqhash in self._file.get(
-            self._ungapped_grp, {}
-        ):
-            # job already done
-            return
+        if seqhash is None:
+            msg = f"Sequence {seqid!r} not found"
+            raise KeyError(msg)
 
         ungapped, gaps = c3_alignment.decompose_gapped_seq(
             self.get_gapped_seq_array(seqid=seqid),
@@ -987,6 +991,21 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def get_gaps(self, seqid: str) -> NumpyIntArrayType:
         return self._get_gaps(seqid)
+
+    def get_seq_array(
+        self,
+        *,
+        seqid: str,
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> SeqIntArrayType:
+        """Returns the sequence as a numpy array of indices"""
+        if seqid in self and self.get_hash(seqid) not in self._file.get(
+            self._gaps_grp, {}
+        ):
+            self._make_gaps_and_ungapped(seqid)
+        return super().get_seq_array(seqid=seqid, start=start, stop=stop, step=step)
 
     def get_gapped_seq_array(
         self,
@@ -1083,7 +1102,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             dtype=self.alphabet.dtype,
         )
         names = tuple(name_map.values())
-        name_to_hash = self._name_to_hash
         for i, name in enumerate(names):
             seq_array[i] = self.get_gapped_seq_array(seqid=name)
         seq_array = seq_array[:, start:stop:step]
