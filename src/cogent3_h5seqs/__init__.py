@@ -42,7 +42,6 @@ seqhash_dtype = numpy.dtype(
     [("key", h5py.special_dtype(vlen=bytes)), ("value", h5py.special_dtype(vlen=bytes))]
 )
 
-
 # HDF5 file modes
 # x and w- mean create file, fail if exists
 # r+ means read/write, file must exist
@@ -150,7 +149,7 @@ def _set_offset(
 
 def _set_reversed_seqs(
     h5file: h5py.File,
-    reverse_seqs: frozenset[str] | None,
+    reverse_seqs: typing.Iterable[str] | None,
     compression: str | None = None,
 ) -> None:
     # set the reverse seqs as a special group
@@ -166,7 +165,7 @@ def _set_name_to_hash(
     name_to_hash: dict[str, str] | None,
     compression: str | None = None,
 ) -> None:
-    # set the name to hash mapping as a special group
+    # set the name to hash and hash to index mappings as a special group
     if not name_to_hash or h5file.mode not in _writeable_modes:
         return
 
@@ -228,10 +227,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         self,
         *,
         data: h5py.File,
-        alphabet: c3_alphabet.AlphabetABC,
+        alphabet: c3_alphabet.CharAlphabet,
         offset: dict[str, int] | None = None,
         check: bool = False,
-        reversed_seqs: frozenset[str] | None = None,
+        reversed_seqs: set[str] | frozenset[str] | None = None,
         compression: bool = True,
     ) -> None:
         self._compress = "lzf" if compression else None
@@ -316,7 +315,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         try:
             self._file.attrs[attr_name] = attr_value
         except TypeError as e:
-            msg = f"Cannot set attribute {attr_name!r} to {attr_value!r} with type {type(attr_value)=}"
+            msg = (
+                f"Cannot set attribute {attr_name!r} to {attr_value!r} with "
+                f"type {type(attr_value)=}"
+            )
             raise TypeError(msg) from e
 
     def get_attr(self, attr_name: str) -> str:
@@ -407,7 +409,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return len(self.names)
 
     @property
-    def alphabet(self) -> c3_alphabet.AlphabetABC:
+    def alphabet(self) -> c3_alphabet.CharAlphabet:
         return self._alphabet
 
     @property
@@ -434,7 +436,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def _make_new_h5_file(
         self,
-        data: h5py.File,
+        data: h5py.File | None,
         alphabet: c3_alphabet.CharAlphabet | None,
         offset: dict[str, int] | None,
         reversed_seqs: set[str] | frozenset[str] | None,
@@ -541,7 +543,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         force_unique_keys: bool = True,
         offset: dict[str, int] | None = None,
         reversed_seqs: frozenset[str] | None = None,
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         """Returns self with added sequences
 
         Parameters
@@ -574,7 +576,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             if overlap and seqid in overlap:
                 continue
 
-            seqarray = self.alphabet.to_indices(seq)
+            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
             seqhash = array_hash64(seqarray)
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
@@ -669,7 +671,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         data,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         # make in memory
         path = kwargs.pop("storage_path", "memory")
         kwargs = {"mode": "w"} | kwargs
@@ -686,7 +688,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         seqcoll: c3_alignment.SequenceCollection,
         path: str | pathlib.Path | None = None,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
         if type(seqcoll) is not c3_alignment.SequenceCollection:
             msg = f"Expected seqcoll to be an instance of SequenceCollection, got {type(seqcoll).__name__!r}"
@@ -711,7 +713,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     @classmethod
     def from_file(
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
-    ) -> typing_extensions.Self:
+    ) -> "UnalignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
             chars=h5file.attrs.get("alphabet"),
@@ -822,7 +824,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data: dict[str, StrORBytesORArray],
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """Construct an AlignedSeqsData object from a dict of aligned sequences
 
         Parameters
@@ -846,7 +848,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data: SeqIntArrayType,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         if len(names) != data.shape[0] or not len(names):
             msg = "Number of names must match number of rows in data."
             raise ValueError(msg)
@@ -864,7 +866,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         gaps: dict[str, SeqIntArrayType],
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         data = {}
         for seqid, seq in seqs.items():
             gp = gaps[seqid]
@@ -885,7 +887,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         seqcoll: c3_alignment.Alignment,
         path: str | pathlib.Path | None = None,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """convert a cogent3 AlignedSeqsDataABC into AlignedSeqsData"""
         if type(seqcoll) is not c3_alignment.Alignment:
             msg = f"Expected seqcoll to be an instance of Alignment, got {type(seqcoll).__name__!r}"
@@ -910,7 +912,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @classmethod
     def from_file(
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         alphabet = c3_alphabet.make_alphabet(
             chars=h5file.attrs.get("alphabet"),
@@ -1084,7 +1086,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         offset: dict[str, int] | None = None,
         reversed_seqs: frozenset[str] | None = None,
         **kwargs,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """Returns same object with added sequences.
 
         Parameters
@@ -1116,8 +1118,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data: h5py.File | None = None,
         alphabet: c3_alphabet.CharAlphabet | None = None,
         offset: dict[str, int] | None = None,
-        reversed_seqs: set[str] | None = None,
-    ) -> typing_extensions.Self:
+        reversed_seqs: set[str] | frozenset[str] | None = None,
+    ) -> "AlignedSeqsData":
         data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
             data=data,
             alphabet=alphabet,
@@ -1134,9 +1136,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def to_alphabet(
         self,
-        alphabet: c3_alphabet.AlphabetABC,
+        alphabet: c3_alphabet.CharAlphabet,
         check_valid: bool = True,
-    ) -> typing_extensions.Self:
+    ) -> "AlignedSeqsData":
         """Returns a new AlignedSeqsData object with the same underlying data
         with a new alphabet."""
         if (
