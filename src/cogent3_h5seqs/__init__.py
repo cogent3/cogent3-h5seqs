@@ -233,8 +233,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         reversed_seqs: set[str] | frozenset[str] | None = None,
         compression: bool = True,
     ) -> None:
-        self._compress = "lzf" if compression else None
-        self._alphabet: c3_alphabet.AlphabetABC = alphabet
+        self._compress = DEFAULT_COMPRESSION if compression else None
+        self._alphabet: c3_alphabet.CharAlphabet = alphabet
         self._file: h5py.File = data
         self._primary_grp: str = self._ungapped_grp
 
@@ -271,7 +271,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "alphabet", "".join(self._alphabet))
         _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char)
         _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
-        _assign_attr_if_missing(data, "moltype", self._alphabet.moltype.name)
+        _assign_attr_if_missing(
+            data, "moltype", getattr(self._alphabet.moltype, "name", None)
+        )
         self._attr_set = True
 
     @property
@@ -1060,10 +1062,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         names = tuple(name_map.values())
         name_to_hash = self._name_to_hash
         for i, name in enumerate(names):
-            seqhash = name_to_hash[name]
-            seq_array[i] = typing.cast(
-                "numpy.ndarray", self._file[f"{self._gapped_grp}/{seqhash}"]
-            )[:]
+            seq_array[i] = self.get_gapped_seq_array(seqid=name)
         seq_array = seq_array[:, start:stop:step]
         # now exclude gaps and missing
         seqs = {}
@@ -1173,7 +1172,8 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
 
     def write(self, path: str | pathlib.Path) -> None:
-        """Write the UnalignedSeqsData object to a file"""
+        """Write the AlignedSeqsData object to a file"""
+        path = pathlib.Path(path)
         if path.suffix != f".{self.filename_suffix}":
             msg = f"path {path} does not have the expected suffix '.{self.filename_suffix}'"
             raise ValueError(msg)
