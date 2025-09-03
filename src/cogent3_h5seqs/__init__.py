@@ -1488,7 +1488,6 @@ class SparseSeqsData(AlignedSeqsData):
                 self._file,
                 offset=self.offset | offset,
                 compression=self._compress,
-                shuffle=True,
             )
 
         self._populate_optional_grps(offset, reversed_seqs, name_to_hash, hash_to_index)
