@@ -24,13 +24,9 @@ c3h5_load_funcs = {
 }
 
 
-def make_sparse(*args, **kwargs):
-    return cogent3_h5seqs.make_aligned(*args, sparse=True, **kwargs)
-
-
 c3h5_make_funcs = {
     cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.make_aligned,
-    cogent3_h5seqs.SPARSE_SUFFIX: make_sparse,
+    cogent3_h5seqs.SPARSE_SUFFIX: cogent3_h5seqs.make_sparse,
     cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3_h5seqs.make_unaligned,
 }
 
@@ -1363,6 +1359,58 @@ def test_make_seqs_invalid_chars():
     data = {"seq1": "AGT1CCT", "seq2": "AGT$CCC"}
     with pytest.raises(AlphabetError):
         cogent3.make_aligned_seqs(data, moltype="dna", storage_backend="c3h5s")
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
+)
+def test_get_positions_identical_seqs(suffix, dna_alpha):
+    """correctly identify variable positions"""
+    seq = "GCGAC"
+    new_seqs = {"A": seq, "B": seq, "C": seq}
+    obj = c3h5_make_funcs[suffix](
+        None, data=new_seqs, alphabet=dna_alpha, in_memory=True
+    )
+    array = obj.get_positions(names=["A", "B", "C"])
+    assert numpy.all(array == dna_alpha.to_indices(seq), axis=1).all()
+
+
+def test_omit_bad_seqs():
+    """omit_bad_seqs should return alignment w/o seqs causing most gaps"""
+    data = {
+        "s1": "---ACC---TT-",
+        "s2": "---ACC---TT-",
+        "s3": "---ACC---TT-",
+        "s4": "--AACCG-GTT-",
+        "s5": "--AACCGGGTTT",
+        "s6": "AGAACCGGGTT-",
+    }
+
+    aln = cogent3.make_aligned_seqs(data, moltype="dna", storage_backend="c3h5s")
+    # with defaults, excludes s6
+    expect = data.copy()
+    del expect["s6"]
+    result = aln.omit_bad_seqs()
+    assert result.to_dict() == expect
+    # with quantile 0.5, just s1, s2, s3
+    expect = data.copy()
+    for key in ("s6", "s5"):
+        del expect[key]
+    result = aln.omit_bad_seqs(0.5)
+    assert result.to_dict() == expect
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
+)
+def test_aln_multi_add_seqs(suffix):
+    data = {"name1": "AAA", "name2": "A--", "name3": "AAA", "name4": "AAA"}
+    data2 = {"name5": "TTT", "name6": "---"}
+    aln = cogent3.make_aligned_seqs(data, moltype="dna", storage_backend=suffix)
+    out_aln = aln.add_seqs(data2)
+    assert len(out_aln.names) == 6
 
 
 @pytest.mark.parametrize(

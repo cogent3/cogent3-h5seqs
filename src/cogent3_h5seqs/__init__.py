@@ -1358,6 +1358,30 @@ def _inflate_seq(
     return seqarray
 
 
+def _make_pointers(
+    *,
+    new_indices: list[NumpyIntArrayType],
+    old_pointers: NumpyIntArrayType | None = None,
+) -> NumpyIntArrayType:
+    # we are representing a multiple alignment as a sparse matrix
+    # the first row is complete
+    # all subsequent rows have only the indices and values of the seq
+    # that differ from the first row
+    # "pointers" record how many differences per seq and allow us to
+    # slice out each "seq" for reassembly
+    if old_pointers is None:
+        start = 0
+        old_pointers = numpy.array([0], dtype=numpy.int64)
+    else:
+        old_pointers = numpy.asarray(old_pointers)
+        start = old_pointers[-1]
+
+    num_diffs = [len(idx) for idx in new_indices]
+    # create the offsets given last value from old pointers
+    new_offsets = numpy.cumsum(num_diffs, dtype=old_pointers.dtype) + start
+    return numpy.concatenate([old_pointers, new_offsets])
+
+
 class SparseSeqsData(AlignedSeqsData):
     """sparse alignment data"""
 
@@ -1470,6 +1494,7 @@ class SparseSeqsData(AlignedSeqsData):
 
         ref_name = self._ref_name or ref_name
 
+        to_indices = self.alphabet.to_indices
         if not self._ref_hash:
             self._populate_attrs()
 
@@ -1510,7 +1535,9 @@ class SparseSeqsData(AlignedSeqsData):
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
                 # same seq, different name
+                del seqarray
                 continue
+
             hash_to_index[seqhash] = len(hash_to_index)
             seqhash_to_names[seqhash].append(seqid)
             seqhashes.append(seqhash)
@@ -1530,21 +1557,42 @@ class SparseSeqsData(AlignedSeqsData):
 
         # how to handle case where there are already stored diffs etc...?
         min_dtype = _best_uint_dtype(max_index)
-        all_indices = numpy.concatenate(diff_indices).astype(min_dtype)
-        all_vals = numpy.concatenate(diff_vals).astype(numpy.uint8)
-        row_ptrs = numpy.cumsum([0] + [len(d) for d in diff_indices], dtype=numpy.int32)
+
+        row_ptrs = _make_pointers(
+            old_pointers=self._file.get(self._seq_ptr_grp, None),
+            new_indices=diff_indices,
+        )
         self._seq_ptrs = row_ptrs
+        if self._seq_ptr_grp in self._file:
+            del self._file[self._seq_ptr_grp]
+
+        self._file.create_dataset(
+            self._seq_ptr_grp, data=row_ptrs, compression=self._compress, shuffle=True
+        )
+
+        old_indices = self._file.get(self._diff_idx_grp, [])[:]
+        if self._diff_idx_grp in self._file:
+            del self._file[self._diff_idx_grp]
+            old_indices = [old_indices]
+
+        old_indices += diff_indices
+        all_indices = numpy.concatenate(old_indices).astype(min_dtype)
         self._file.create_dataset(
             self._diff_idx_grp,
             data=all_indices,
             compression=self._compress,
             shuffle=True,
         )
+
+        old_vals = self._file.get(self._diff_val_grp, [])[:]
+        if self._diff_val_grp in self._file:
+            del self._file[self._diff_val_grp]
+            old_vals = [old_vals]
+
+        old_vals += diff_vals
+        all_vals = numpy.concatenate(old_vals).astype(numpy.uint8)
         self._file.create_dataset(
             self._diff_val_grp, data=all_vals, compression=self._compress, shuffle=True
-        )
-        self._file.create_dataset(
-            self._seq_ptr_grp, data=row_ptrs, compression=self._compress, shuffle=True
         )
         if offset := offset or {}:
             _set_offset(
@@ -1552,6 +1600,8 @@ class SparseSeqsData(AlignedSeqsData):
                 offset=self.offset | offset,
                 compression=self._compress,
             )
+
+        del diff_indices, diff_vals
 
         self._populate_optional_grps(offset, reversed_seqs, name_to_hash, hash_to_index)
         return self
@@ -1603,15 +1653,23 @@ class SparseSeqsData(AlignedSeqsData):
         array_seqs = numpy.tile(
             typing.cast("SeqIntArrayType", self._ref_seq)[start:stop], (len(names), 1)
         )
+        if self._diff_idx_grp not in self._file:
+            return array_seqs[:, ::step]
+
+        all_indices = self._file[self._diff_idx_grp][:]
+        all_values = self._file[self._diff_val_grp][:]
+        seq_ptrs = self._seq_ptrs
         for index, name in enumerate(names):
-            if name == self._ref_name:
+            seqhash = self._name_to_hash[name]
+            if seqhash == self._ref_hash:
                 continue
-            seq_ptr_idx = self._hash_to_index[self._name_to_hash[name]]
+
+            seq_ptr_idx = self._hash_to_index[seqhash]
             indices, diffs = _get_diff_indices_vals_for_index(
                 index=seq_ptr_idx,
-                all_indices=self._file[self._diff_idx_grp][:],
-                all_values=self._file[self._diff_val_grp][:],
-                row_ptrs=self._seq_ptrs,
+                all_indices=all_indices,
+                all_values=all_values,
+                row_ptrs=seq_ptrs,
             )
             # select the indices and vals within start-stop
             within_range = (indices >= start) & (indices < stop)
@@ -1619,6 +1677,7 @@ class SparseSeqsData(AlignedSeqsData):
             indices = indices[within_range] - start
             diffs = diffs[within_range]
             array_seqs[index, indices] = diffs
+
         if step > 1:
             array_seqs = array_seqs[:, ::step]
         return array_seqs
