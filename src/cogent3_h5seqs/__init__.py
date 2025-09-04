@@ -669,7 +669,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             if overlap and seqid in overlap:
                 continue
 
-            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
+            seqarray = typing.cast(
+                "SeqIntArrayType", self.alphabet.to_indices(seq, validate=True)
+            )
             seqhash = array_hash64(seqarray)
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
@@ -1445,7 +1447,7 @@ class SparseSeqsData(AlignedSeqsData):
             ref_name = ref_name or next(iter(seqs))
 
             ref_seq = typing.cast(
-                "SeqIntArrayType", self.alphabet.to_indices(seqs.pop(ref_name))
+                "SeqIntArrayType", to_indices(seqs.pop(ref_name), validate=True)
             )
             self._name_to_hash = {ref_name: self._set_ref_seq(ref_name, ref_seq)}
 
@@ -1470,7 +1472,7 @@ class SparseSeqsData(AlignedSeqsData):
             if overlap and seqid in overlap:
                 continue
 
-            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
+            seqarray = typing.cast("SeqIntArrayType", to_indices(seq, validate=True))
             seqhash = array_hash64(seqarray)
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
