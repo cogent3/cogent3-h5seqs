@@ -1167,6 +1167,22 @@ def test_repr(raw_aligned_data, dna_alpha, suffix):
     assert part in repr(obj)
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
+)
+def test_repr_bytes(raw_aligned_data, suffix):
+    alpha = cogent3.get_moltype("bytes").most_degen_alphabet()
+    make_func = c3h5_make_funcs[suffix]
+    obj = make_func("memory", data=raw_aligned_data, mode="w", alphabet=alpha)
+    part = "alphabet=bytes"
+    assert part in repr(obj)
+
+
 def test_set_name_to_hash_no_data():
     h5file = cogent3_h5seqs.open_h5_file("memory", mode="w")
     # this should not fail
@@ -1339,6 +1355,30 @@ def test_get_seq_length_with_wout_gaps_present(small_aligned_sparse):
 def test_selecting_dtype():
     with pytest.raises(ValueError):
         cogent3_h5seqs._best_uint_dtype(2**64 + 10)  # noqa: SLF001
+
+
+def test_make_seqs_invalid_chars():
+    from cogent3.core.alphabet import AlphabetError
+
+    data = {"seq1": "AGT1CCT", "seq2": "AGT$CCC"}
+    with pytest.raises(AlphabetError):
+        cogent3.make_aligned_seqs(data, moltype="dna", storage_backend="c3h5s")
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
+)
+def test_counts_per_seq_bytes_moltype(suffix):
+    """produce correct counts per seq with text moltypes"""
+    data = {"a": "AAAA??????", "b": "CCCGGG--NN", "c": "CCGGTTCCAA"}
+    coll = cogent3.make_aligned_seqs(data, moltype="bytes", storage_backend=suffix)
+    got = coll.counts_per_seq(include_ambiguity=True, allow_gap=True)
+    assert got.col_sum()[b"-"] == 2
+    assert got.col_sum()[b"?"] == 6
+    assert got.col_sum()[b"T"] == 2
+
+
 @pytest.mark.parametrize(
     "suffix",
     [

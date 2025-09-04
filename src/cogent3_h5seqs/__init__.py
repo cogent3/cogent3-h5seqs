@@ -1,4 +1,5 @@
 import collections
+import contextlib
 import functools
 import pathlib
 import pickle
@@ -103,6 +104,14 @@ def _assign_attr_if_missing(
     if attr not in h5file.attrs:
         h5file.attrs[attr] = value
     return h5file.attrs[attr] == value
+
+
+def _assign_alphabet_if_missing(
+    h5file: h5py.File, attr: str, value: typing_extensions.Any
+) -> bool:
+    if attr not in h5file.attrs:
+        h5file.attrs.create(attr, value, dtype=f"S{len(value)}")
+    return h5file.attrs[attr].tolist() == value
 
 
 def _valid_h5seqs(h5file: h5py.File, main_seq_grp: str) -> bool:
@@ -254,6 +263,24 @@ def duplicate_h5_file(
     return result
 
 
+def _restore_alphabet(
+    *,
+    chars: bytes | str,
+    moltype: str,
+    gap: c3_alphabet.StrOrBytes | None,
+    missing: c3_alphabet.StrOrBytes | None,
+) -> c3_alphabet.CharAlphabet:
+    if isinstance(chars, bytes):
+        with contextlib.suppress(UnicodeDecodeError):
+            chars = chars.decode("utf8")  # type: ignore
+    return c3_alphabet.make_alphabet(
+        chars=chars,
+        gap=gap,
+        missing=missing,
+        moltype=moltype,
+    )
+
+
 class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     _ungapped_grp: str = "ungapped"
     _suffix: str = UNALIGNED_SUFFIX
@@ -315,8 +342,14 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         path = pathlib.Path(self._file.filename)
         attr_vals = [f"'{path.name}'"]
         attr_vals.extend(
-            f"{attr}={self._file.attrs[attr]!r}" for attr in self._file.attrs
+            f"{attr}={self._file.attrs[attr]!r}"
+            for attr in self._file.attrs
+            if attr != "alphabet"
         )
+        if self.alphabet.moltype.name == "bytes":
+            attr_vals.append("alphabet=bytes")
+        else:
+            attr_vals.append(f"alphabet='{''.join(self.alphabet)}'")
         n2h, _ = _get_name2hash_hash2idx(self._file)
         parts = ", ".join(attr_vals)
         return f"{name}({parts}, num_seqs={len(n2h)})"
@@ -331,9 +364,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if self._attr_set:
             return
         data = self._file
-        _assign_attr_if_missing(data, "alphabet", "".join(self._alphabet))
-        _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char)
-        _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
+        _assign_alphabet_if_missing(data, "alphabet", self._alphabet.as_bytes())
+        _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char or "")
+        _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char or "")
         _assign_attr_if_missing(
             data, "moltype", getattr(self._alphabet.moltype, "name", None)
         )
@@ -542,7 +575,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
         reversed_seqs = frozenset(reversed_seqs or self.reversed_seqs)
         if alphabet and alphabet != self.alphabet:
-            datafile.attrs["alphabet"] = "".join(alphabet)
+            datafile.attrs["alphabet"] = alphabet.as_bytes()
             datafile.attrs["moltype"] = getattr(alphabet.moltype, "name", None)
 
         if offset := offset or self.offset:
@@ -798,11 +831,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> "UnalignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
-            gap=h5file.attrs.get("gap_char"),
-            missing=h5file.attrs.get("missing_char"),
             moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
+            missing=h5file.attrs.get("missing_char") or None,
+            gap=h5file.attrs.get("gap_char") or None,
         )
         return cls(data=h5file, alphabet=alphabet, check=check)
 
@@ -1006,7 +1039,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> "AlignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
             gap=h5file.attrs.get("gap_char"),
             missing=h5file.attrs.get("missing_char"),
@@ -1630,7 +1663,7 @@ def _(
 
     if alphabet is None:
         mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
             gap=h5file.attrs.get("gap_char"),
             missing=h5file.attrs.get("missing_char"),
@@ -1733,7 +1766,7 @@ def make_aligned(
 
     if alphabet is None:
         mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs["alphabet"],
             gap=h5file.attrs["gap_char"],
             missing=h5file.attrs["missing_char"],
