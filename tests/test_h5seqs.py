@@ -1339,3 +1339,46 @@ def test_get_seq_length_with_wout_gaps_present(small_aligned_sparse):
 def test_selecting_dtype():
     with pytest.raises(ValueError):
         cogent3_h5seqs._best_uint_dtype(2**64 + 10)  # noqa: SLF001
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
+)
+def test_pickling_in_memory(suffix, dna_alpha):
+    # always fails
+    import pickle
+
+    raw = {"s1": "ACG-T", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw, in_memory=True, alphabet=dna_alpha)
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(obj)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
+)
+def test_pickling_on_disk(suffix, dna_alpha, tmp_path):
+    import pickle
+
+    outpath = tmp_path / f"test.{suffix}"
+    raw = {"s1": "ACG-T", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](
+        outpath, data=raw.copy(), alphabet=dna_alpha, mode="w"
+    )
+    obj.write(outpath)
+    obj.close()
+    obj = c3h5_load_funcs[suffix](outpath, mode="r")
+    pickled = pickle.dumps(obj)
+    unpickled = pickle.loads(pickled)
+    names = unpickled.names
+
+    assert set(names) == set(raw.keys())
+    unpickled.close()

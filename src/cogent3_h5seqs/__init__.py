@@ -1,6 +1,7 @@
 import collections
 import functools
 import pathlib
+import pickle
 import typing
 import uuid
 
@@ -282,7 +283,34 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if check:
             self._check_file(self._file)
 
+    def __getstate__(self) -> dict[str, typing.Any]:
+        if self._file.mode != "r":
+            msg = (
+                f"Cannot pickle {self.__class__.__name__!r} unless file is "
+                f"opened in read-only mode (got mode={self._file.mode!r})"
+            )
+            raise pickle.PicklingError(msg)
+
+        path = pathlib.Path(self._file.filename)
+        return {"path": path, "alphabet": self.alphabet}
+
+    def __setstate__(self, state: dict[str, typing.Any]) -> None:
+        """Restore from pickle."""
+        h5file = h5py.File(pathlib.Path(state["path"]), mode="r")
+        data_kw = (
+            "data" if "unaligned" in self.__class__.__name__.lower() else "gapped_seqs"
+        )
+        kwargs = {data_kw: h5file, "alphabet": state["alphabet"]}
+        obj = self.__class__(**kwargs)
+        self.__dict__.update(obj.__dict__)
+        # we have to avoid garbage colection closing the h5file once this scope
+        # cleaned up, so we close it outselves and open it again directly assigning
+        # only to self
+        self.close()
+        self._file = h5py.File(pathlib.Path(state["path"]), mode="r")
+
     def __repr__(self) -> str:
+        self._populate_attrs()
         name = self.__class__.__name__
         path = pathlib.Path(self._file.filename)
         attr_vals = [f"'{path.name}'"]
