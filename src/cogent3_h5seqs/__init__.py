@@ -353,6 +353,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         parts = ", ".join(attr_vals)
         return f"{name}({parts}, num_seqs={len(n2h)})"
 
+    def _invalid_seqids(self, seqids: PySeqStrType) -> set[str]:
+        """returns seqids not present in self.names"""
+        return set(seqids) - set(self.names)
+
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
         if not _valid_h5seqs(file, cls._ungapped_grp):
@@ -724,9 +728,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         step: int | None = None,
     ) -> SeqIntArrayType:
         """Returns the sequence as a numpy array of indices"""
-        if seqid not in self.names:
+        if self._invalid_seqids([seqid]):
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
+
         start = start or 0
         stop = stop if stop is not None else self.get_seq_length(seqid=seqid)
         step = step or 1
@@ -922,9 +927,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
-        if seqid not in self.names:
+        if self._invalid_seqids([seqid]):
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
+
         seqhash = self.get_hash(seqid=seqid)
         if seqhash in self._file.get(self._ungapped_grp, {}):
             return typing.cast(
@@ -1115,6 +1121,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         stop: int | None = None,
         step: int | None = None,
     ) -> SeqIntArrayType:
+        if self._invalid_seqids([seqid]):
+            msg = f"seqid not present {seqid!r}"
+            raise KeyError(msg)
+
         start = start or 0
         stop = stop if stop is not None else self.align_len
         step = step or 1
@@ -1165,6 +1175,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         stop: int | None = None,
         step: int | None = None,
     ) -> SeqIntArrayType:
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
+            raise KeyError(msg)
+
         start = start or 0
         stop = stop or self.align_len
         step = step or 1
@@ -1176,9 +1190,6 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             (len(names), len(range(start, stop, step))), dtype=self.alphabet.dtype
         )
         for index, name in enumerate(names):
-            if name not in self.names:
-                msg = f"Sequence {name!r} not found"
-                raise KeyError(msg)
             array_seqs[index] = self.get_gapped_seq_array(
                 seqid=name,
                 start=start,
