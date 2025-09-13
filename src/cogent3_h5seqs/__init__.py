@@ -33,6 +33,7 @@ SeqCollTypes = typing.Union["SequenceCollection", "Alignment"]
 StrORBytesORArray = str | bytes | numpy.ndarray
 NumpyIntArrayType = npt.NDArray[numpy.integer]
 SeqIntArrayType = npt.NDArray[numpy.unsignedinteger]
+PySeqStrType = typing.Sequence[str]
 
 # for storing large dicts in HDF5
 # for the annotation offset
@@ -98,16 +99,14 @@ def open_h5_file(
     return h5_file
 
 
-def _assign_attr_if_missing(
-    h5file: h5py.File, attr: str, value: typing_extensions.Any
-) -> bool:
+def _assign_attr_if_missing(h5file: h5py.File, attr: str, value: typing.Any) -> bool:
     if attr not in h5file.attrs:
         h5file.attrs[attr] = value
     return h5file.attrs[attr] == value
 
 
 def _assign_alphabet_if_missing(
-    h5file: h5py.File, attr: str, value: typing_extensions.Any
+    h5file: h5py.File, attr: str, value: typing.Any
 ) -> bool:
     if attr not in h5file.attrs:
         h5file.attrs.create(attr, value, dtype=f"S{len(value)}")
@@ -967,7 +966,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def from_names_and_array(
         cls,
         *,
-        names: list[str],
+        names: PySeqStrType,
         data: SeqIntArrayType,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
@@ -1161,7 +1160,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def get_positions(
         self,
-        names: list[str],
+        names: PySeqStrType,
         start: int | None = None,
         stop: int | None = None,
         step: int | None = None,
@@ -1361,7 +1360,7 @@ def _inflate_seq(
 def _make_pointers(
     *,
     new_indices: list[NumpyIntArrayType],
-    old_pointers: NumpyIntArrayType | None = None,
+    old_pointers: Dataset | None = None,
 ) -> NumpyIntArrayType:
     # we are representing a multiple alignment as a sparse matrix
     # the first row is complete
@@ -1379,20 +1378,23 @@ def _make_pointers(
     num_diffs = [len(idx) for idx in new_indices]
     # create the offsets given last value from old pointers
     new_offsets = numpy.cumsum(num_diffs, dtype=old_pointers.dtype) + start
-    return numpy.concatenate([old_pointers, new_offsets])
+    return typing.cast(
+        "NumpyIntArrayType", numpy.concatenate([old_pointers, new_offsets])
+    )
+
+
 
 
 class SparseSeqsData(AlignedSeqsData):
     """sparse alignment data"""
 
-    _seqhash_grp: str = "seqhashes"
-    _gapped_grp: str = "gapped"
     _diff_idx_grp: str = "diff_indices"
     _diff_val_grp: str = "diff_vals"
-    _seq_ptr_grp: str = "seq_ptrs"
-    _ungapped_grp: str = "ungapped"
+    _gapped_grp: str = "gapped"
     _gaps_grp: str = "gaps"
+    _seq_ptr_grp: str = "seq_ptrs"
     _suffix: str = SPARSE_SUFFIX
+    _ungapped_grp: str = "ungapped"
 
     def __init__(
         self,
@@ -1542,7 +1544,7 @@ class SparseSeqsData(AlignedSeqsData):
             seqhash_to_names[seqhash].append(seqid)
             seqhashes.append(seqhash)
             indices, diffs = _get_indices_diffs(
-                typing.cast("SeqIntArrayType", self._ref_seq), seqarray
+                typing.cast("SeqIntArrayType", self._ref_seq[:]), seqarray
             )
             max_index = max(max_index, indices.max())
             diff_indices.append(indices)
@@ -1633,7 +1635,7 @@ class SparseSeqsData(AlignedSeqsData):
 
     def get_positions(
         self,
-        names: list[str],
+        names: PySeqStrType,
         start: int | None = None,
         stop: int | None = None,
         step: int | None = None,
