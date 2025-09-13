@@ -7,6 +7,7 @@ import typing
 import uuid
 
 import h5py
+import numba
 import numpy
 import numpy.typing as npt
 import typing_extensions
@@ -1177,7 +1178,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             slice_record=slice_record,
         )
 
-    def get_positions(
+    def get_pos_range(
         self,
         names: PySeqStrType,
         start: int | None = None,
@@ -1207,6 +1208,46 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             )
         return array_seqs
 
+    def get_positions(
+        self,
+        names: typing.Sequence[str],
+        positions: typing.Sequence[int],
+    ) -> numpy.ndarray[numpy.uint8]:
+        """returns alignment positions for names
+
+        Parameters
+        ----------
+        names
+            series of sequence names
+        positions
+            indices lying within self
+
+        Returns
+        -------
+            2D numpy.array, oriented by sequence
+
+        Raises
+        ------
+        IndexError if a provided position is negative or
+        greater then alignment length.
+        """
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
+            raise KeyError(msg)
+
+        min_index, max_index = numpy.min(positions), numpy.max(positions)
+        if min_index < 0 or max_index > self.align_len:
+            msg = f"Out of range: {min_index=} and / or {max_index=}"
+            raise IndexError(msg)
+
+        array_seqs = numpy.empty(
+            (len(names), len(positions)), dtype=self.alphabet.dtype
+        )
+        for index, name in enumerate(names):
+            array_seqs[index] = self.get_gapped_seq_array(seqid=name)[positions]
+
+        return array_seqs
+
     def get_ungapped(
         self,
         name_map: dict[str, str],
@@ -1218,22 +1259,26 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             msg = f"{start=}, {stop=}, {step=} not >= 0"
             raise ValueError(msg)
 
-        seq_array = numpy.empty(
-            (len(name_map), self.align_len),
-            dtype=self.alphabet.dtype,
-        )
         names = tuple(name_map.values())
-        for i, name in enumerate(names):
-            seq_array[i] = self.get_gapped_seq_array(seqid=name)
-        seq_array = seq_array[:, start:stop:step]
+        seq_array = self.get_pos_range(
+            names=names,
+            start=start,
+            stop=stop,
+            step=step,
+        )
         # now exclude gaps and missing
+        gap_index = self.alphabet.gap_index
+        missing_index = (
+            self.alphabet.missing_index
+            if self.alphabet.missing_index is not None
+            else -1
+        )
         seqs = {}
         for i, name in enumerate(names):
-            seq = seq_array[i]
-            indices = seq != self.alphabet.gap_index
-            if self.alphabet.missing_index is not None:
-                indices &= seq != self.alphabet.missing_index
-            seqs[name] = seq[indices]
+            seq, _ = c3_alignment.decompose_gapped_seq_array(
+                seq_array[i], gap_index=gap_index, missing_index=missing_index
+            )
+            seqs[name] = seq
 
         offset = {n: v for n, v in self.offset.items() if n in names}
         reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
@@ -1653,7 +1698,7 @@ class SparseSeqsData(AlignedSeqsData):
         )
         return seqarray[start:stop:step]
 
-    def get_positions(
+    def get_pos_range(
         self,
         names: PySeqStrType,
         start: int | None = None,
@@ -1678,9 +1723,9 @@ class SparseSeqsData(AlignedSeqsData):
         if self._diff_idx_grp not in self._file:
             return array_seqs[:, ::step]
 
-        all_indices = self._file[self._diff_idx_grp][:]
-        all_values = self._file[self._diff_val_grp][:]
-        seq_ptrs = self._seq_ptrs
+        all_indices = self._diff_indices[:]
+        all_values = self._diff_vals[:]
+        seq_ptrs = self._seq_ptrs[:]
         for index, name in enumerate(names):
             seqhash = self._name_to_hash[name]
             if seqhash == self._ref_hash:
@@ -1703,6 +1748,230 @@ class SparseSeqsData(AlignedSeqsData):
         if step > 1:
             array_seqs = array_seqs[:, ::step]
         return array_seqs
+
+    def get_positions(
+        self,
+        names: typing.Sequence[str],
+        positions: typing.Sequence[int] | npt.NDArray[numpy.integer],
+    ) -> numpy.ndarray[numpy.uint8]:
+        """returns alignment positions for names
+
+        Parameters
+        ----------
+        names
+            series of sequence names
+        positions
+            indices lying within self
+
+        Returns
+        -------
+            2D numpy.array, oriented by sequence
+
+        Raises
+        ------
+        IndexError if a provided position is negative or
+        greater than the alignment length.
+        """
+        if not len(positions):
+            msg = "must provide positions"
+            raise NotImplementedError(msg)
+
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
+            raise KeyError(msg)
+
+        min_index, max_index = numpy.min(positions), numpy.max(positions)
+        if min_index < 0 or max_index > self.align_len:
+            msg = f"Out of range: {min_index=} and / or {max_index=}"
+            raise IndexError(msg)
+
+        # we get the hash indices, we don't include the same hash twice
+        # we need the hash index order to be sorted
+        n2h = self._name_to_hash
+        h2i = self._hash_to_index
+        ref_hash = self._ref_hash
+        ref_present = False
+        selected_hashes = {}
+        for n in names:
+            h = n2h[n]
+            if h == ref_hash:
+                # no work needed for matches to ref
+                ref_present = True
+                continue
+            i = h2i[h]
+            selected_hashes[h] = i
+
+        hash_indices = numpy.array(sorted(selected_hashes.values()), dtype=numpy.int64)
+        subalign = extract_subalignment(
+            ref_seq=typing.cast("npt.NDArray", self._ref_seq[:]),
+            all_indices=typing.cast("npt.NDArray", self._diff_indices[:]),
+            all_vals=typing.cast("npt.NDArray", self._diff_vals[:]),
+            seq_ptrs=typing.cast("npt.NDArray", self._seq_ptrs[:]),
+            seq_ids=hash_indices,
+            positions=numpy.array(positions),
+            ref_present=ref_present,
+        )
+        if ref_present:
+            selected_hashes[self._ref_hash] = len(self.names)
+
+        seq_indices = names_to_relative_indices(
+            names=names,
+            subset_hashes=set(selected_hashes.keys()),
+            name_to_hash=self._name_to_hash,
+            hash_to_index=selected_hashes,
+        )
+        return subalign[seq_indices]
+
+    def get_ungapped(
+        self,
+        name_map: dict[str, str],
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> tuple[dict, dict]:
+        if (start or 0) < 0 or (stop or 0) < 0 or (step or 1) <= 0:
+            msg = f"{start=}, {stop=}, {step=} not >= 0"
+            raise ValueError(msg)
+
+        names = tuple(name_map.values())
+        seq_array = self.get_pos_range(
+            names=names,
+            start=start,
+            stop=stop,
+            step=step,
+        )
+        # now exclude gaps and missing
+        gap_index = self.alphabet.gap_index
+        missing_index = self.alphabet.missing_index or -1
+        seq_array, seq_lengths = remove_gaps(seq_array, gap_index, missing_index)
+        seqs = {name: seq_array[i, : seq_lengths[i]] for i, name in enumerate(names)}
+        offset = {n: v for n, v in self.offset.items() if n in names}
+        reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
+        return seqs, {
+            "offset": offset,
+            "name_map": name_map,
+            "reversed_seqs": reversed_seqs,
+        }
+
+
+def names_to_relative_indices(
+    *,
+    names: typing.Sequence[str],
+    subset_hashes: set[str],
+    name_to_hash: dict[str, str],
+    hash_to_index: dict[str, int],
+) -> list[int]:
+    """
+    returns relative indices for names into their hash subset
+
+    Parameters
+    ----------
+    names
+        sequence names.
+    name_to_hash
+        {name: sequence hash, ...}
+    hash_to_index
+        {hash: hash order, ...}
+
+    Returns
+    -------
+    Relative indices that map names onto the subset of hashes.
+    """
+    ordered_hashes = sorted(subset_hashes, key=lambda h: hash_to_index[h])
+    hash_to_rel = {h: i for i, h in enumerate(ordered_hashes)}
+    # translate names into relative indices
+    return [hash_to_rel[name_to_hash[n]] for n in names]
+
+
+@numba.njit(cache=True)
+def extract_subalignment(
+    ref_seq: npt.NDArray[numpy.uint8],
+    all_indices: npt.NDArray[numpy.integer],
+    all_vals: npt.NDArray[numpy.integer],
+    seq_ptrs: npt.NDArray[numpy.integer],
+    seq_ids: npt.NDArray[numpy.integer],
+    positions: npt.NDArray[numpy.integer],
+    ref_present: bool,
+) -> SeqIntArrayType:
+    """
+    Extracts a dense subalignment matrix from sparse CSR-like MSA,
+    optimized for when `positions` is sorted.
+
+    Parameters
+    ----------
+    ref_seq
+        Reference sequence.
+    all_indices
+        Concatenated positions of differences (sorted within each seq).
+    all_vals
+        Values corresponding to `all_indices`.
+    seq_ptrs
+        CSR row pointer array
+    seq_ids
+        Sequence indices to extract.
+    positions
+        Alignment column positions to extract (must be sorted).
+    ref_present
+        the reference sequence is present, this will be the last
+        row in the result object
+
+    Returns
+    -------
+    numpy.ndarray (uint8) of shape (len(seq_ids), len(positions))
+    """
+    num_seqs = len(seq_ids)
+    num_pos = len(positions)
+
+    # initialize with reference sequence values
+    ref_vals = ref_seq[positions]
+    num_rows = num_seqs + 1 if ref_present else num_seqs
+    result = numpy.empty((num_rows, num_pos), dtype=numpy.uint8)
+    result[:, numpy.arange(ref_vals.size)] = ref_vals
+
+    for i in range(num_seqs):
+        seq_id = seq_ids[i]
+        start = seq_ptrs[seq_id]
+        end = seq_ptrs[seq_id + 1]
+
+        idxs = all_indices[start:end]
+        vals = all_vals[start:end]
+
+        # a merge scan assuming positions and idxs are sorted
+        idx_ptr = 0  # index in idxs
+        pos_ptr = 0  # index in positions
+
+        while idx_ptr < len(idxs) and pos_ptr < num_pos:
+            pos = positions[pos_ptr]
+
+            if idxs[idx_ptr] < pos:
+                idx_ptr += 1
+            elif idxs[idx_ptr] > pos:
+                pos_ptr += 1
+            else:
+                # populate this sequence difference
+                result[i, pos_ptr] = vals[idx_ptr]
+                idx_ptr += 1
+                pos_ptr += 1
+
+    return result
+
+
+@numba.njit(cache=True)
+def remove_gaps(arr, gap_index, missing_index=-1):
+    nrows, ncols = arr.shape
+    num_non_gaps = numpy.empty(nrows, dtype=numpy.int32)
+    if missing_index == -1:
+        missing_index = gap_index
+
+    for i in range(nrows):
+        write_pos = 0
+        for j in range(ncols):
+            val = arr[i, j]
+            if val not in (gap_index, missing_index):
+                arr[i, write_pos] = val
+                write_pos += 1
+        num_non_gaps[i] = write_pos
+    return arr, num_non_gaps
 
 
 @functools.singledispatch
