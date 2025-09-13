@@ -562,15 +562,22 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def _make_new_h5_file(
         self,
+        *,
         data: h5py.File | None,
         alphabet: c3_alphabet.CharAlphabet | None,
         offset: dict[str, int] | None,
         reversed_seqs: set[str] | frozenset[str] | None,
+        exclude_groups: set[str] | None = None,
     ) -> tuple[
         h5py.File, c3_alphabet.CharAlphabet, dict[str, int] | None, frozenset[str]
     ]:
         datafile: h5py.File = (
-            duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
+            duplicate_h5_file(
+                h5file=self._file,
+                path="memory",
+                in_memory=True,
+                exclude_groups=exclude_groups,
+            )
             if data is None
             else data
         )
@@ -593,12 +600,14 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         alphabet: c3_alphabet.CharAlphabet | None = None,
         offset: dict[str, int] | None = None,
         reversed_seqs: set[str] | frozenset[str] | None = None,
+        exclude_groups: set[str] | None = None,
     ) -> typing_extensions.Self:
         data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
             data=data,
             alphabet=alphabet,
             offset=offset,
             reversed_seqs=reversed_seqs,
+            exclude_groups=exclude_groups,
         )
         return self.__class__(
             data=data,
