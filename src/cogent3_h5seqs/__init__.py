@@ -18,6 +18,7 @@ from cogent3.core import moltype as c3_moltype
 from cogent3.core import sequence as c3_sequence
 from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
+from h5py._hl.dataset import Dataset
 
 __version__ = "0.6.1"
 
@@ -1534,20 +1535,36 @@ class SparseSeqsData(AlignedSeqsData):
         self._ref_name = stored_ref_name or ref_name
         self._ref_hash: str = gapped_seqs.attrs.get("ref_hash", "")
         self._seqhashes: dict[str, int] = {}
-        self._ref_seq: SeqIntArrayType | None = None
-        self._seq_ptrs: NumpyIntArrayType | None = None
         self._attr_from_file()
+
+    @property
+    def _ref_seq(self) -> Dataset:
+        dataset = f"{self._primary_grp}/{self._ref_hash}"
+        if dataset not in self._file:
+            msg = "Reference sequence not found"
+            raise ValueError(msg)
+        return typing.cast("Dataset", self._file[dataset])
+
+    @property
+    def _seq_ptrs(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._seq_ptr_grp}"])
+
+    @property
+    def _diff_vals(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._diff_val_grp}"])
+
+    @property
+    def _diff_indices(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._diff_idx_grp}"])
+
+    @property
+    def _var_pos(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._var_pos_grp}"])
 
     def _attr_from_file(self) -> None:
         if not self._ref_hash:
             return
 
-        self._ref_seq = typing.cast(
-            "SeqIntArrayType", self._file[f"{self._primary_grp}/{self._ref_hash}"]
-        )[:]
-        self._seq_ptrs = typing.cast(
-            "NumpyIntArrayType", self._file[f"{self._seq_ptr_grp}"]
-        )[:]
         n2h, h2i = _get_name2hash_hash2idx(self._file)
         self._name_to_hash = n2h
         self._hash_to_index = h2i
@@ -1555,15 +1572,12 @@ class SparseSeqsData(AlignedSeqsData):
     def _set_ref_seq(self, ref_name: str, ref_seq: SeqIntArrayType) -> str:
         self._ref_name = ref_name
         _assign_attr_if_missing(self._file, "ref_name", ref_name)
-        self._ref_seq = typing.cast(
-            "SeqIntArrayType", self.alphabet.to_indices(ref_seq)
-        )
-        self._ref_hash = array_hash64(self._ref_seq)
+        self._ref_hash = array_hash64(ref_seq)
         _assign_attr_if_missing(self._file, "ref_hash", self._ref_hash)
         dataset = f"{self._primary_grp}/{self._ref_hash}"
         self._file.create_dataset(
             name=dataset,
-            data=self._ref_seq,
+            data=ref_seq,
             chunks=True,
             compression=self._compress,
             shuffle=True,
@@ -1735,10 +1749,10 @@ class SparseSeqsData(AlignedSeqsData):
         index = self._hash_to_index[seqhash]
         seqarray = _inflate_seq(
             index=index,
-            ref_seq=self._ref_seq,
-            all_indices=self._file[self._diff_idx_grp][:],
-            all_values=self._file[self._diff_val_grp][:],
-            row_ptrs=self._seq_ptrs,
+            ref_seq=typing.cast("SeqIntArrayType", self._ref_seq[:]),
+            all_indices=self._diff_indices[:],
+            all_values=self._diff_vals[:],
+            row_ptrs=self._seq_ptrs[:],
         )
         return seqarray[start:stop:step]
 
