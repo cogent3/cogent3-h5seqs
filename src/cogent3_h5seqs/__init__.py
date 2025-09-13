@@ -1386,6 +1386,49 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             raise ValueError(msg)
         self._write(path=path, exclude_groups={self._ungapped_grp, self._gaps_grp})
 
+    def variable_positions(
+        self,
+        names: typing.Sequence[str],
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> numpy.ndarray:
+        """returns absolute indices of positions that have more than one state
+
+        Parameters
+        ----------
+        names
+            selected seqids
+        start
+            absolute start
+        stop
+            absolute stop
+        step
+            step
+
+        Returns
+        -------
+        Absolute indices (as distinct from an index relative to start) of
+        variable positions.
+        """
+        start = start or 0
+        if len(names) < 2:
+            return numpy.array([])
+
+        array_seqs = self.get_pos_range(names, start=start, stop=stop, step=step)
+        if array_seqs.size == 0:
+            return numpy.array([])
+
+        step = step or 1
+        indices = (array_seqs != array_seqs[0]).any(axis=0)
+        # because we need to return absolute indices, we add start
+        # to the result
+        indices = numpy.where(indices)[0]
+        if step > 1:
+            indices *= step
+        indices += start
+        return indices
+
 
 def _get_indices_diffs(
     ref_seq: SeqIntArrayType, seqarray: SeqIntArrayType
@@ -1460,6 +1503,7 @@ class SparseSeqsData(AlignedSeqsData):
     _seq_ptr_grp: str = "seq_ptrs"
     _suffix: str = SPARSE_SUFFIX
     _ungapped_grp: str = "ungapped"
+    _var_pos_grp: str = "variable_posns"
 
     def __init__(
         self,
@@ -1821,6 +1865,48 @@ class SparseSeqsData(AlignedSeqsData):
             hash_to_index=selected_hashes,
         )
         return subalign[seq_indices]
+
+    def variable_positions(
+        self,
+        names: PySeqStrType,
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> numpy.ndarray[numpy.integer]:
+        """returns absolute indices of positions that have more than one state
+
+        Parameters
+        ----------
+        names
+            selected seqids
+        start
+            absolute start
+        stop
+            absolute stop
+        step
+            step
+
+        Returns
+        -------
+        Absolute indices (as distinct from an index relative to start) of
+        variable positions.
+        """
+        if len(names) < 2 or not self._hash_to_index:
+            # no seqs, too few, or all identical
+            return numpy.array([], dtype=numpy.int64)
+
+        var_pos = self._var_pos[:]
+        if start is None and stop is None and step is None:
+            return var_pos
+
+        start = start or 0
+        stop = stop or self.align_len
+        step = step or 1
+        indices = (var_pos >= start) & (var_pos < stop)
+        var_pos = var_pos[indices]
+        if step > 1:
+            var_pos = var_pos[(var_pos - start) % step == 0]
+        return var_pos
 
     def get_ungapped(
         self,
