@@ -1492,6 +1492,34 @@ def _make_pointers(
     )
 
 
+def _update_sparse_elements(
+    *,
+    h5file: h5py.File,
+    new_elements: list[NumpyIntArrayType],
+    grp_name: str,
+    dtype: npt.DTypeLike,
+) -> NumpyIntArrayType:
+    old_elements = h5file.get(grp_name, [])[:]
+    if len(old_elements):
+        old_elements: list[NumpyIntArrayType] = [old_elements]
+
+    old_elements += new_elements
+    return numpy.concatenate(old_elements).astype(dtype)
+
+
+def _replace_grp_in_file(
+    *,
+    h5file: h5py.File,
+    compression: str | None,
+    grp_name: str,
+    new_value: NumpyIntArrayType,
+) -> None:
+    if grp_name in h5file:
+        del h5file[grp_name]
+
+    h5file.create_dataset(
+        grp_name, data=new_value, compression=compression, shuffle=True
+    )
 
 
 class SparseSeqsData(AlignedSeqsData):
@@ -1595,28 +1623,18 @@ class SparseSeqsData(AlignedSeqsData):
             self._file[f"{self._gapped_grp}/{self._ref_hash}"],
         ).shape[0]
 
-    def add_seqs(
+    def _seqs_to_sparse_arrays(
         self,
         seqs: dict[str, StrORBytesORArray],
-        force_unique_keys: bool = True,
-        offset: dict[str, int] | None = None,
-        reversed_seqs: frozenset[str] | None = None,
-        ref_name: str = "",
-        **kwargs: dict[str, typing.Any],
-    ) -> "UnalignedSeqsData":
-        lengths = {len(seq) for seq in seqs.values()}
-        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
-            msg = f"not all lengths equal {lengths=}"
-            raise ValueError(msg)
-
-        if not self.writable:
-            msg = "Cannot add sequences to a read-only file"
-            raise PermissionError(msg)
-
-        if self._ref_name and ref_name and ref_name != self._ref_name:
-            msg = f"provided {ref_name!r} does not match existing {self._ref_name!r}"
-            raise ValueError(msg)
-
+        force_unique_keys: bool,
+        ref_name: str,
+    ) -> tuple[
+        list[NumpyIntArrayType],
+        list[SeqIntArrayType],
+        dict[str, str],
+        dict[str, int],
+        int,
+    ]:
         ref_name = self._ref_name or ref_name
 
         to_indices = self.alphabet.to_indices
@@ -1673,6 +1691,37 @@ class SparseSeqsData(AlignedSeqsData):
             diff_indices.append(indices)
             diff_vals.append(diffs)
 
+        return diff_indices, diff_vals, name_to_hash, hash_to_index, max_index
+
+    def add_seqs(
+        self,
+        seqs: dict[str, StrORBytesORArray],
+        force_unique_keys: bool = True,
+        offset: dict[str, int] | None = None,
+        reversed_seqs: frozenset[str] | None = None,
+        ref_name: str = "",
+        **kwargs: dict[str, typing.Any],
+    ) -> "SparseSeqsData":
+        if not self.writable:
+            msg = "Cannot add sequences to a read-only file"
+            raise PermissionError(msg)
+
+        lengths = {len(seq) for seq in seqs.values()}
+        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+            msg = f"not all lengths equal {lengths=}"
+            raise ValueError(msg)
+
+        if self._ref_name and ref_name and ref_name != self._ref_name:
+            msg = f"provided {ref_name!r} does not match existing {self._ref_name!r}"
+            raise ValueError(msg)
+
+        diff_indices, diff_vals, name_to_hash, hash_to_index, max_index = (
+            self._seqs_to_sparse_arrays(
+                seqs=seqs,
+                force_unique_keys=force_unique_keys,
+                ref_name=ref_name,
+            )
+        )
         if not diff_indices:
             # no unique sequences
             self._populate_optional_grps(
@@ -1680,45 +1729,54 @@ class SparseSeqsData(AlignedSeqsData):
             )
             return self
 
-        # how to handle case where there are already stored diffs etc...?
-        min_dtype = _best_uint_dtype(max_index)
-
         row_ptrs = _make_pointers(
             old_pointers=self._file.get(self._seq_ptr_grp, None),
             new_indices=diff_indices,
         )
-        self._seq_ptrs = row_ptrs
-        if self._seq_ptr_grp in self._file:
-            del self._file[self._seq_ptr_grp]
-
-        self._file.create_dataset(
-            self._seq_ptr_grp, data=row_ptrs, compression=self._compress, shuffle=True
-        )
-
-        old_indices = self._file.get(self._diff_idx_grp, [])[:]
-        if self._diff_idx_grp in self._file:
-            del self._file[self._diff_idx_grp]
-            old_indices = [old_indices]
-
-        old_indices += diff_indices
-        all_indices = numpy.concatenate(old_indices).astype(min_dtype)
-        self._file.create_dataset(
-            self._diff_idx_grp,
-            data=all_indices,
+        _replace_grp_in_file(
+            h5file=self._file,
             compression=self._compress,
-            shuffle=True,
+            grp_name=self._seq_ptr_grp,
+            new_value=row_ptrs,
         )
 
-        old_vals = self._file.get(self._diff_val_grp, [])[:]
-        if self._diff_val_grp in self._file:
-            del self._file[self._diff_val_grp]
-            old_vals = [old_vals]
-
-        old_vals += diff_vals
-        all_vals = numpy.concatenate(old_vals).astype(numpy.uint8)
-        self._file.create_dataset(
-            self._diff_val_grp, data=all_vals, compression=self._compress, shuffle=True
+        # update the variant indices
+        min_dtype = _best_uint_dtype(max_index)
+        merged_indices = _update_sparse_elements(
+            h5file=self._file,
+            new_elements=diff_indices,
+            grp_name=self._diff_idx_grp,
+            dtype=min_dtype,
         )
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._diff_idx_grp,
+            new_value=merged_indices,
+        )
+
+        # update the variable position attribute
+        _replace_grp_in_file(
+            h5file=self._file,
+            grp_name=self._var_pos_grp,
+            compression=self._compress,
+            new_value=numpy.unique(self._diff_indices[:]),
+        )
+
+        # update the variant values
+        merged_vals = _update_sparse_elements(
+            h5file=self._file,
+            new_elements=diff_vals,
+            grp_name=self._diff_val_grp,
+            dtype=numpy.uint8,
+        )
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._diff_val_grp,
+            new_value=merged_vals,
+        )
+
         if offset := offset or {}:
             _set_offset(
                 self._file,
@@ -1726,7 +1784,7 @@ class SparseSeqsData(AlignedSeqsData):
                 compression=self._compress,
             )
 
-        del diff_indices, diff_vals
+        del merged_indices, merged_vals
 
         self._populate_optional_grps(offset, reversed_seqs, name_to_hash, hash_to_index)
         return self
