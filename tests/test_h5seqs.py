@@ -1,3 +1,4 @@
+import itertools
 import pathlib
 
 import cogent3
@@ -41,7 +42,7 @@ def raw_data():
     return {"s1": "ACGG", "s2": "TGGGCAGTA"}
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def raw_aligned_data():
     return {"s1": "TGG--ACGG", "s2": "TGGGCAGTA"}
 
@@ -693,7 +694,7 @@ def test_write_aligned(raw_aligned_data, suffix, tmp_path, out_name):
         cogent3_h5seqs.SPARSE_SUFFIX,
     ],
 )
-def test_get_positions(raw_aligned_data, suffix):
+def test_get_pos_range(raw_aligned_data, suffix):
     c3 = cogent3.make_aligned_seqs(
         raw_aligned_data, moltype="dna", storage_backend=None
     )
@@ -716,7 +717,7 @@ def test_get_positions_invalid_coord(raw_aligned_data, arg, suffix):
         raw_aligned_data, moltype="dna", storage_backend=suffix
     )
     with pytest.raises(ValueError):
-        h5.storage.get_positions(names=["s1", "s2"], **{arg: -1})
+        h5.storage.get_pos_range(names=["s1", "s2"], **{arg: -1})
 
 
 def test_set_as_default_drivers_unaligned(raw_aligned_data):
@@ -938,7 +939,7 @@ def test_get_gapped_seq_array_invalidseqid(fxt, request):
 def test_get_positions_invalid_name(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
-        obj.get_positions(names=["missing"])
+        obj.get_pos_range(names=["missing"])
 
 
 @pytest.mark.parametrize(
@@ -949,13 +950,13 @@ def test_get_valid_positions(suffix, dna_alpha):
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
     obj = func(None, data=data.copy(), in_memory=True, alphabet=dna_alpha)
     full = numpy.array([dna_alpha.to_indices(data[n]) for n in obj.names])
-    got = obj.get_positions(obj.names)
+    got = obj.get_pos_range(obj.names)
     numpy.testing.assert_equal(got, full)
     sl = slice(2, 8)
-    got = obj.get_positions(obj.names, start=sl.start, stop=sl.stop)
+    got = obj.get_pos_range(obj.names, start=sl.start, stop=sl.stop)
     numpy.testing.assert_equal(got, full[:, sl])
     sl = slice(2, 8, 2)
-    got = obj.get_positions(obj.names, start=sl.start, stop=sl.stop, step=sl.step)
+    got = obj.get_pos_range(obj.names, start=sl.start, stop=sl.stop, step=sl.step)
     numpy.testing.assert_equal(got, full[:, sl])
 
 
@@ -1372,7 +1373,7 @@ def test_get_positions_identical_seqs(suffix, dna_alpha):
     obj = c3h5_make_funcs[suffix](
         None, data=new_seqs, alphabet=dna_alpha, in_memory=True
     )
-    array = obj.get_positions(names=["A", "B", "C"])
+    array = obj.get_pos_range(names=["A", "B", "C"])
     assert numpy.all(array == dna_alpha.to_indices(seq), axis=1).all()
 
 
@@ -1470,3 +1471,142 @@ def test_pickling_on_disk(suffix, dna_alpha, tmp_path):
 
     assert set(names) == set(raw.keys())
     unpickled.close()
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_variable_positions(suffix, dna_alpha):
+    raw = {"s1": "ACGGT", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw.copy(), alphabet=dna_alpha, mode="w")
+    pos = obj.variable_positions(obj.names)
+    assert pos.size == 0
+    raw = {"s1": "ACGGT", "s2": "ACGAT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw.copy(), alphabet=dna_alpha, mode="w")
+    pos = obj.variable_positions(obj.names)
+    assert pos.size == 1
+    assert pos[0] == 3
+    cols = obj.get_positions(obj.names, pos)
+    expect = numpy.array([[3], [2]], dtype=numpy.uint8)
+    assert (cols == expect).all()
+    pos = obj.variable_positions(obj.names, start=1)
+    assert pos.size == 1
+    # position values are absolute, i.e. start should have no effect
+    assert pos[0] == 3
+    # no variable positions within segment
+    pos = obj.variable_positions(obj.names, stop=3)
+    assert pos.size == 0
+    # no variable positions modulo 2
+    pos = obj.variable_positions(obj.names, step=2)
+    assert pos.size == 0
+    # no variable positions modulo 2, unless we start from 1
+    pos = obj.variable_positions(obj.names, start=1, step=2)
+    assert pos.size == 1
+    assert pos[0] == 3
+
+
+@pytest.fixture
+def raw_5seq_pos():
+    return {
+        "s1": "ACCTG",
+        "s2": "-CCAG",
+        "s3": "ACCTG",  # same as s1
+        "s4": "ACC-A",
+        "s5": "TCCTG",
+    }
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+@pytest.mark.parametrize(
+    "names", list(itertools.combinations(["s1", "s2", "s3", "s4", "s5"], 3))
+)
+def test_variable_positions_subset_seqs(raw_5seq_pos, suffix, dna_alpha, names):
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    aln = cogent3.make_aligned_seqs(array_data, moltype="dna", storage_backend=suffix)
+    sub = aln.take_seqs(names)
+    array_seqs = sub.array_seqs
+    expect = tuple(numpy.where((array_seqs != array_seqs[0]).any(axis=0))[0])
+    got = sub.variable_positions(include_gap_motif=True)
+    assert got == expect
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_variable_positions_subset_diff_to_whole(raw_5seq_pos, suffix, dna_alpha):
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    aln = cogent3.make_aligned_seqs(array_data, moltype="dna", storage_backend=suffix)
+    sub = aln.take_seqs(["s1", "s3"])
+    assert sub.storage is aln.storage
+    array_seqs = sub.array_seqs
+    expect = tuple(numpy.where((array_seqs != array_seqs[0]).any(axis=0))[0])
+    got = sub.variable_positions(include_gap_motif=True)
+    assert got == expect
+    assert sub.variable_positions(include_gap_motif=True) != aln.variable_positions(
+        include_gap_motif=True
+    )
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["s1", "s2", "s3", "s4", "s5"], ["s2", "s3", "s4"], ["s5", "s1", "s3", "s4"]],
+)
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_get_positions_name_order(raw_5seq_pos, dna_alpha, names, suffix):
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    expect = numpy.array([array_data[n] for n in names], dtype=dna_alpha.dtype)
+    obj = c3h5_make_funcs[suffix](
+        None, data=raw_5seq_pos.copy(), alphabet=dna_alpha, mode="w"
+    )
+    got = obj.get_positions(names=names, positions=numpy.arange(expect.shape[1]))
+    assert (got == expect).all()
+
+
+@pytest.mark.parametrize(
+    "posns",
+    [[0, 1, 2], [0, 3, 4], [1, 2, 4]],
+)
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_get_positions_posns(raw_5seq_pos, dna_alpha, posns, suffix):
+    names = sorted(raw_5seq_pos.keys())
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    expect = numpy.array([array_data[n][posns] for n in names], dtype=dna_alpha.dtype)
+    obj = c3h5_make_funcs[suffix](
+        None, data=raw_5seq_pos.copy(), alphabet=dna_alpha, mode="w"
+    )
+    got = obj.get_positions(names=names, positions=posns)
+    assert (got == expect).all()
+
+
+def test_sparse_write_read(tmp_path, raw_5seq_pos):
+    aln = cogent3.make_aligned_seqs(raw_5seq_pos.copy(), moltype="dna")
+    outpath = tmp_path / f"demo.{cogent3_h5seqs.SPARSE_SUFFIX}"
+    aln.write(outpath)
+    ld = cogent3.load_aligned_seqs(outpath, moltype="dna")
+    assert ld.to_dict() == raw_5seq_pos
