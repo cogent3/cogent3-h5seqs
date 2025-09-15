@@ -712,7 +712,7 @@ def test_get_pos_range(raw_aligned_data, suffix):
     ],
 )
 @pytest.mark.parametrize("arg", ["start", "stop", "step"])
-def test_get_positions_invalid_coord(raw_aligned_data, arg, suffix):
+def test_get_pos_range_invalid_coord(raw_aligned_data, arg, suffix):
     h5 = cogent3.make_aligned_seqs(
         raw_aligned_data, moltype="dna", storage_backend=suffix
     )
@@ -936,7 +936,7 @@ def test_get_gapped_seq_array_invalidseqid(fxt, request):
 
 
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
-def test_get_positions_invalid_name(fxt, request):
+def test_get_pos_range_invalid_name(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
         obj.get_pos_range(names=["missing"])
@@ -945,7 +945,7 @@ def test_get_positions_invalid_name(fxt, request):
 @pytest.mark.parametrize(
     "suffix", [cogent3_h5seqs.ALIGNED_SUFFIX, cogent3_h5seqs.SPARSE_SUFFIX]
 )
-def test_get_valid_positions(suffix, dna_alpha):
+def test_get_pos_range_valid(suffix, dna_alpha):
     func = c3h5_make_funcs[suffix]
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
     obj = func(None, data=data.copy(), in_memory=True, alphabet=dna_alpha)
@@ -1366,7 +1366,7 @@ def test_make_seqs_invalid_chars():
     "suffix",
     [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
 )
-def test_get_positions_identical_seqs(suffix, dna_alpha):
+def test_get_pos_range_identical_seqs(suffix, dna_alpha):
     """correctly identify variable positions"""
     seq = "GCGAC"
     new_seqs = {"A": seq, "B": seq, "C": seq}
