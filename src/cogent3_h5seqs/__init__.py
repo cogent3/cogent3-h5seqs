@@ -2005,7 +2005,7 @@ def names_to_relative_indices(
     return [hash_to_rel[name_to_hash[n]] for n in names]
 
 
-@numba.njit(cache=True)
+@numba.njit(cache=True, nogil=True)
 def extract_subalignment(
     ref_seq: npt.NDArray[numpy.uint8],
     all_indices: npt.NDArray[numpy.integer],
@@ -2014,7 +2014,7 @@ def extract_subalignment(
     seq_ids: npt.NDArray[numpy.integer],
     positions: npt.NDArray[numpy.integer],
     ref_present: bool,
-) -> SeqIntArrayType:
+) -> SeqIntArrayType:  # pragma: no cover
     """
     Extracts a dense subalignment matrix from sparse CSR-like MSA,
     optimized for when `positions` is sorted.
@@ -2078,8 +2078,8 @@ def extract_subalignment(
     return result
 
 
-@numba.njit(cache=True)
-def remove_gaps(arr, gap_index, missing_index=-1):
+@numba.njit(cache=True, nogil=True)
+def remove_gaps(arr, gap_index, missing_index=-1):  # pragma: no cover
     nrows, ncols = arr.shape
     num_non_gaps = numpy.empty(nrows, dtype=numpy.int32)
     if missing_index == -1:
