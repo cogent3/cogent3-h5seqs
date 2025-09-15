@@ -1273,18 +1273,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
         # now exclude gaps and missing
         gap_index = self.alphabet.gap_index
-        missing_index = (
-            self.alphabet.missing_index
-            if self.alphabet.missing_index is not None
-            else -1
-        )
-        seqs = {}
-        for i, name in enumerate(names):
-            seq, _ = c3_alignment.decompose_gapped_seq_array(
-                seq_array[i], gap_index=gap_index, missing_index=missing_index
-            )
-            seqs[name] = seq
-
+        missing_index = self.alphabet.missing_index or -1
+        seq_array, seq_lengths = remove_gaps(seq_array, gap_index, missing_index)
+        seqs = {name: seq_array[i, : seq_lengths[i]] for i, name in enumerate(names)}
         offset = {n: v for n, v in self.offset.items() if n in names}
         reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
         return seqs, {
@@ -1983,37 +1974,6 @@ class SparseSeqsData(AlignedSeqsData):
         if step > 1:
             var_pos = var_pos[(var_pos - start) % step == 0]
         return var_pos
-
-    def get_ungapped(
-        self,
-        name_map: dict[str, str],
-        start: int | None = None,
-        stop: int | None = None,
-        step: int | None = None,
-    ) -> tuple[dict, dict]:
-        if (start or 0) < 0 or (stop or 0) < 0 or (step or 1) <= 0:
-            msg = f"{start=}, {stop=}, {step=} not >= 0"
-            raise ValueError(msg)
-
-        names = tuple(name_map.values())
-        seq_array = self.get_pos_range(
-            names=names,
-            start=start,
-            stop=stop,
-            step=step,
-        )
-        # now exclude gaps and missing
-        gap_index = self.alphabet.gap_index
-        missing_index = self.alphabet.missing_index or -1
-        seq_array, seq_lengths = remove_gaps(seq_array, gap_index, missing_index)
-        seqs = {name: seq_array[i, : seq_lengths[i]] for i, name in enumerate(names)}
-        offset = {n: v for n, v in self.offset.items() if n in names}
-        reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
-        return seqs, {
-            "offset": offset,
-            "name_map": name_map,
-            "reversed_seqs": reversed_seqs,
-        }
 
 
 def names_to_relative_indices(
