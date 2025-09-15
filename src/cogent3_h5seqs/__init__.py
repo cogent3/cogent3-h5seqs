@@ -1232,6 +1232,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         IndexError if a provided position is negative or
         greater then alignment length.
         """
+        if not len(positions):
+            msg = "must provide positions"
+            raise NotImplementedError(msg)
+
         if diff := self._invalid_seqids(names):
             msg = f"these names not present {diff}"
             raise KeyError(msg)

@@ -1604,6 +1604,39 @@ def test_get_positions_posns(raw_5seq_pos, dna_alpha, posns, suffix):
     assert (got == expect).all()
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_get_positions_no_posns(raw_5seq_pos, dna_alpha, suffix):
+    names = sorted(raw_5seq_pos.keys())
+    obj = c3h5_make_funcs[suffix](
+        None, data=raw_5seq_pos.copy(), alphabet=dna_alpha, mode="w"
+    )
+    with pytest.raises(NotImplementedError):
+        obj.get_positions(names=names, positions=[])
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_positions_invalid_name(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_positions(names=["missing"], positions=[0, 1])
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+def test_get_positions_invalid_pos_values(fxt, request):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(IndexError):
+        obj.get_positions(names=["s1"], positions=[-1, 0, 1, 100_000])
+
+    with pytest.raises(IndexError):
+        obj.get_positions(names=["s1"], positions=[0, 1, 100_000])
+
+
 def test_sparse_write_read(tmp_path, raw_5seq_pos):
     aln = cogent3.make_aligned_seqs(raw_5seq_pos.copy(), moltype="dna")
     outpath = tmp_path / f"demo.{cogent3_h5seqs.SPARSE_SUFFIX}"
