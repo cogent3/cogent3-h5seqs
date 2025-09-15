@@ -20,7 +20,7 @@ from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
 from h5py._hl.dataset import Dataset
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 if typing.TYPE_CHECKING:  # pragma: no cover
     from cogent3.core.alignment import Alignment, SequenceCollection
