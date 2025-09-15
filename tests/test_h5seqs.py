@@ -1325,6 +1325,18 @@ def test_make_sparse_bad_ref(raw_aligned_data, dna_alpha):
         )
 
 
+def test_make_sparse_no_ref(dna_alpha):
+    obj = c3h5_make_funcs["c3h5s"](
+        "memory",
+        data=None,
+        alphabet=dna_alpha,
+        ref_name="bad",
+        in_memory=True,
+    )
+    with pytest.raises(ValueError):
+        obj._ref_seq
+
+
 def test_sparse_set_invalid_ref(small_aligned_sparse, tmp_path, dna_alpha):
     outpath = tmp_path / f"test.{small_aligned_sparse.filename_suffix}"
     small_aligned_sparse.write(outpath)
