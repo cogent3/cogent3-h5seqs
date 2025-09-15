@@ -1232,6 +1232,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         IndexError if a provided position is negative or
         greater then alignment length.
         """
+        if not len(positions):
+            msg = "must provide positions"
+            raise NotImplementedError(msg)
+
         if diff := self._invalid_seqids(names):
             msg = f"these names not present {diff}"
             raise KeyError(msg)
@@ -1269,18 +1273,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         )
         # now exclude gaps and missing
         gap_index = self.alphabet.gap_index
-        missing_index = (
-            self.alphabet.missing_index
-            if self.alphabet.missing_index is not None
-            else -1
-        )
-        seqs = {}
-        for i, name in enumerate(names):
-            seq, _ = c3_alignment.decompose_gapped_seq_array(
-                seq_array[i], gap_index=gap_index, missing_index=missing_index
-            )
-            seqs[name] = seq
-
+        missing_index = self.alphabet.missing_index or -1
+        seq_array, seq_lengths = remove_gaps(seq_array, gap_index, missing_index)
+        seqs = {name: seq_array[i, : seq_lengths[i]] for i, name in enumerate(names)}
         offset = {n: v for n, v in self.offset.items() if n in names}
         reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
         return seqs, {
@@ -1797,10 +1792,6 @@ class SparseSeqsData(AlignedSeqsData):
         step: int,
     ) -> SeqIntArrayType:
         seqhash = self.get_hash(seqid=seqid)
-        if seqhash is None:
-            msg = f"seqid {seqid!r} not found"
-            raise KeyError(msg)
-
         if seqhash == self._ref_hash:
             return typing.cast("SeqIntArrayType", self._ref_seq)[start:stop:step]
 
@@ -1828,8 +1819,8 @@ class SparseSeqsData(AlignedSeqsData):
             msg = f"{start=}, {stop=}, {step=} not >= 1"
             raise ValueError(msg)
 
-        if missing := set(names) - set(self.names):
-            msg = f"Some sequences not found: {missing}"
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
             raise KeyError(msg)
 
         # we don't apply step yet to make applying diffs more efficient
@@ -1980,37 +1971,6 @@ class SparseSeqsData(AlignedSeqsData):
             var_pos = var_pos[(var_pos - start) % step == 0]
         return var_pos
 
-    def get_ungapped(
-        self,
-        name_map: dict[str, str],
-        start: int | None = None,
-        stop: int | None = None,
-        step: int | None = None,
-    ) -> tuple[dict, dict]:
-        if (start or 0) < 0 or (stop or 0) < 0 or (step or 1) <= 0:
-            msg = f"{start=}, {stop=}, {step=} not >= 0"
-            raise ValueError(msg)
-
-        names = tuple(name_map.values())
-        seq_array = self.get_pos_range(
-            names=names,
-            start=start,
-            stop=stop,
-            step=step,
-        )
-        # now exclude gaps and missing
-        gap_index = self.alphabet.gap_index
-        missing_index = self.alphabet.missing_index or -1
-        seq_array, seq_lengths = remove_gaps(seq_array, gap_index, missing_index)
-        seqs = {name: seq_array[i, : seq_lengths[i]] for i, name in enumerate(names)}
-        offset = {n: v for n, v in self.offset.items() if n in names}
-        reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
-        return seqs, {
-            "offset": offset,
-            "name_map": name_map,
-            "reversed_seqs": reversed_seqs,
-        }
-
 
 def names_to_relative_indices(
     *,
@@ -2041,7 +2001,7 @@ def names_to_relative_indices(
     return [hash_to_rel[name_to_hash[n]] for n in names]
 
 
-@numba.njit(cache=True)
+@numba.njit(cache=True, nogil=True)
 def extract_subalignment(
     ref_seq: npt.NDArray[numpy.uint8],
     all_indices: npt.NDArray[numpy.integer],
@@ -2050,7 +2010,7 @@ def extract_subalignment(
     seq_ids: npt.NDArray[numpy.integer],
     positions: npt.NDArray[numpy.integer],
     ref_present: bool,
-) -> SeqIntArrayType:
+) -> SeqIntArrayType:  # pragma: no cover
     """
     Extracts a dense subalignment matrix from sparse CSR-like MSA,
     optimized for when `positions` is sorted.
@@ -2114,8 +2074,8 @@ def extract_subalignment(
     return result
 
 
-@numba.njit(cache=True)
-def remove_gaps(arr, gap_index, missing_index=-1):
+@numba.njit(cache=True, nogil=True)
+def remove_gaps(arr, gap_index, missing_index=-1):  # pragma: no cover
     nrows, ncols = arr.shape
     num_non_gaps = numpy.empty(nrows, dtype=numpy.int32)
     if missing_index == -1:
