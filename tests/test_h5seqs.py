@@ -1517,6 +1517,34 @@ def test_variable_positions(suffix, dna_alpha):
     assert pos[0] == 3
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_variable_positions_one_seq(suffix, dna_alpha):
+    raw = {"s1": "ACGGT", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw.copy(), alphabet=dna_alpha, mode="w")
+    pos = obj.variable_positions(obj.names[:1])
+    assert pos.size == 0
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_variable_positions_no_variation(suffix, dna_alpha):
+    raw = {"s1": "", "s2": ""}
+    obj = c3h5_make_funcs[suffix](None, data=raw.copy(), alphabet=dna_alpha, mode="w")
+    pos = obj.variable_positions(obj.names)
+    assert pos.size == 0
+
+
 @pytest.fixture
 def raw_5seq_pos():
     return {
