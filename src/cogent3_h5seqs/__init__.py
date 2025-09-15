@@ -1,10 +1,13 @@
 import collections
+import contextlib
 import functools
 import pathlib
+import pickle
 import typing
 import uuid
 
 import h5py
+import numba
 import numpy
 import numpy.typing as npt
 import typing_extensions
@@ -15,6 +18,7 @@ from cogent3.core import moltype as c3_moltype
 from cogent3.core import sequence as c3_sequence
 from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
+from h5py._hl.dataset import Dataset
 
 __version__ = "0.6.1"
 
@@ -31,6 +35,7 @@ SeqCollTypes = typing.Union["SequenceCollection", "Alignment"]
 StrORBytesORArray = str | bytes | numpy.ndarray
 NumpyIntArrayType = npt.NDArray[numpy.integer]
 SeqIntArrayType = npt.NDArray[numpy.unsignedinteger]
+PySeqStrType = typing.Sequence[str]
 
 # for storing large dicts in HDF5
 # for the annotation offset
@@ -96,12 +101,18 @@ def open_h5_file(
     return h5_file
 
 
-def _assign_attr_if_missing(
-    h5file: h5py.File, attr: str, value: typing_extensions.Any
-) -> bool:
+def _assign_attr_if_missing(h5file: h5py.File, attr: str, value: typing.Any) -> bool:
     if attr not in h5file.attrs:
         h5file.attrs[attr] = value
     return h5file.attrs[attr] == value
+
+
+def _assign_alphabet_if_missing(
+    h5file: h5py.File, attr: str, value: typing.Any
+) -> bool:
+    if attr not in h5file.attrs:
+        h5file.attrs.create(attr, value, dtype=f"S{len(value)}")
+    return h5file.attrs[attr].tolist() == value
 
 
 def _valid_h5seqs(h5file: h5py.File, main_seq_grp: str) -> bool:
@@ -253,6 +264,24 @@ def duplicate_h5_file(
     return result
 
 
+def _restore_alphabet(
+    *,
+    chars: bytes | str,
+    moltype: str,
+    gap: c3_alphabet.StrOrBytes | None,
+    missing: c3_alphabet.StrOrBytes | None,
+) -> c3_alphabet.CharAlphabet:
+    if isinstance(chars, bytes):
+        with contextlib.suppress(UnicodeDecodeError):
+            chars = chars.decode("utf8")  # type: ignore
+    return c3_alphabet.make_alphabet(
+        chars=chars,
+        gap=gap,
+        missing=missing,
+        moltype=moltype,
+    )
+
+
 class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     _ungapped_grp: str = "ungapped"
     _suffix: str = UNALIGNED_SUFFIX
@@ -282,16 +311,53 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if check:
             self._check_file(self._file)
 
+    def __getstate__(self) -> dict[str, typing.Any]:
+        if self._file.mode != "r":
+            msg = (
+                f"Cannot pickle {self.__class__.__name__!r} unless file is "
+                f"opened in read-only mode (got mode={self._file.mode!r})"
+            )
+            raise pickle.PicklingError(msg)
+
+        path = pathlib.Path(self._file.filename)
+        return {"path": path, "alphabet": self.alphabet}
+
+    def __setstate__(self, state: dict[str, typing.Any]) -> None:
+        """Restore from pickle."""
+        h5file = h5py.File(pathlib.Path(state["path"]), mode="r")
+        data_kw = (
+            "data" if "unaligned" in self.__class__.__name__.lower() else "gapped_seqs"
+        )
+        kwargs = {data_kw: h5file, "alphabet": state["alphabet"]}
+        obj = self.__class__(**kwargs)
+        self.__dict__.update(obj.__dict__)
+        # we have to avoid garbage colection closing the h5file once this scope
+        # cleaned up, so we close it outselves and open it again directly assigning
+        # only to self
+        self.close()
+        self._file = h5py.File(pathlib.Path(state["path"]), mode="r")
+
     def __repr__(self) -> str:
+        self._populate_attrs()
         name = self.__class__.__name__
         path = pathlib.Path(self._file.filename)
         attr_vals = [f"'{path.name}'"]
         attr_vals.extend(
-            f"{attr}={self._file.attrs[attr]!r}" for attr in self._file.attrs
+            f"{attr}={self._file.attrs[attr]!r}"
+            for attr in self._file.attrs
+            if attr != "alphabet"
         )
+        if self.alphabet.moltype.name == "bytes":
+            attr_vals.append("alphabet=bytes")
+        else:
+            attr_vals.append(f"alphabet='{''.join(self.alphabet)}'")
         n2h, _ = _get_name2hash_hash2idx(self._file)
         parts = ", ".join(attr_vals)
         return f"{name}({parts}, num_seqs={len(n2h)})"
+
+    def _invalid_seqids(self, seqids: PySeqStrType) -> set[str]:
+        """returns seqids not present in self.names"""
+        return set(seqids) - set(self.names)
 
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
@@ -303,9 +369,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if self._attr_set:
             return
         data = self._file
-        _assign_attr_if_missing(data, "alphabet", "".join(self._alphabet))
-        _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char)
-        _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char)
+        _assign_alphabet_if_missing(data, "alphabet", self._alphabet.as_bytes())
+        _assign_attr_if_missing(data, "gap_char", self._alphabet.gap_char or "")
+        _assign_attr_if_missing(data, "missing_char", self._alphabet.missing_char or "")
         _assign_attr_if_missing(
             data, "moltype", getattr(self._alphabet.moltype, "name", None)
         )
@@ -498,15 +564,22 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def _make_new_h5_file(
         self,
+        *,
         data: h5py.File | None,
         alphabet: c3_alphabet.CharAlphabet | None,
         offset: dict[str, int] | None,
         reversed_seqs: set[str] | frozenset[str] | None,
+        exclude_groups: set[str] | None = None,
     ) -> tuple[
         h5py.File, c3_alphabet.CharAlphabet, dict[str, int] | None, frozenset[str]
     ]:
         datafile: h5py.File = (
-            duplicate_h5_file(h5file=self._file, path="memory", in_memory=True)
+            duplicate_h5_file(
+                h5file=self._file,
+                path="memory",
+                in_memory=True,
+                exclude_groups=exclude_groups,
+            )
             if data is None
             else data
         )
@@ -514,7 +587,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
         reversed_seqs = frozenset(reversed_seqs or self.reversed_seqs)
         if alphabet and alphabet != self.alphabet:
-            datafile.attrs["alphabet"] = "".join(alphabet)
+            datafile.attrs["alphabet"] = alphabet.as_bytes()
             datafile.attrs["moltype"] = getattr(alphabet.moltype, "name", None)
 
         if offset := offset or self.offset:
@@ -529,12 +602,14 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         alphabet: c3_alphabet.CharAlphabet | None = None,
         offset: dict[str, int] | None = None,
         reversed_seqs: set[str] | frozenset[str] | None = None,
+        exclude_groups: set[str] | None = None,
     ) -> typing_extensions.Self:
         data, alphabet, offset, reversed_seqs = self._make_new_h5_file(
             data=data,
             alphabet=alphabet,
             offset=offset,
             reversed_seqs=reversed_seqs,
+            exclude_groups=exclude_groups,
         )
         return self.__class__(
             data=data,
@@ -641,7 +716,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             if overlap and seqid in overlap:
                 continue
 
-            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
+            seqarray = typing.cast(
+                "SeqIntArrayType", self.alphabet.to_indices(seq, validate=True)
+            )
             seqhash = array_hash64(seqarray)
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
@@ -662,9 +739,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         step: int | None = None,
     ) -> SeqIntArrayType:
         """Returns the sequence as a numpy array of indices"""
-        if seqid not in self.names:
+        if self._invalid_seqids([seqid]):
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
+
         start = start or 0
         stop = stop if stop is not None else self.get_seq_length(seqid=seqid)
         step = step or 1
@@ -768,11 +846,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> "UnalignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
-            gap=h5file.attrs.get("gap_char"),
-            missing=h5file.attrs.get("missing_char"),
             moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
+            missing=h5file.attrs.get("missing_char") or None,
+            gap=h5file.attrs.get("gap_char") or None,
         )
         return cls(data=h5file, alphabet=alphabet, check=check)
 
@@ -860,9 +938,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
 
     def get_seq_length(self, seqid: str) -> int:
         """Returns the length of the sequence"""
-        if seqid not in self.names:
+        if self._invalid_seqids([seqid]):
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
+
         seqhash = self.get_hash(seqid=seqid)
         if seqhash in self._file.get(self._ungapped_grp, {}):
             return typing.cast(
@@ -904,7 +983,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def from_names_and_array(
         cls,
         *,
-        names: list[str],
+        names: PySeqStrType,
         data: SeqIntArrayType,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
@@ -976,7 +1055,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> "AlignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
             gap=h5file.attrs.get("gap_char"),
             missing=h5file.attrs.get("missing_char"),
@@ -1053,6 +1132,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         stop: int | None = None,
         step: int | None = None,
     ) -> SeqIntArrayType:
+        if self._invalid_seqids([seqid]):
+            msg = f"seqid not present {seqid!r}"
+            raise KeyError(msg)
+
         start = start or 0
         stop = stop if stop is not None else self.align_len
         step = step or 1
@@ -1096,13 +1179,17 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             slice_record=slice_record,
         )
 
-    def get_positions(
+    def get_pos_range(
         self,
-        names: list[str],
+        names: PySeqStrType,
         start: int | None = None,
         stop: int | None = None,
         step: int | None = None,
     ) -> SeqIntArrayType:
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
+            raise KeyError(msg)
+
         start = start or 0
         stop = stop or self.align_len
         step = step or 1
@@ -1114,15 +1201,52 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             (len(names), len(range(start, stop, step))), dtype=self.alphabet.dtype
         )
         for index, name in enumerate(names):
-            if name not in self.names:
-                msg = f"Sequence {name!r} not found"
-                raise KeyError(msg)
             array_seqs[index] = self.get_gapped_seq_array(
                 seqid=name,
                 start=start,
                 stop=stop,
                 step=step,
             )
+        return array_seqs
+
+    def get_positions(
+        self,
+        names: typing.Sequence[str],
+        positions: typing.Sequence[int],
+    ) -> numpy.ndarray[numpy.uint8]:
+        """returns alignment positions for names
+
+        Parameters
+        ----------
+        names
+            series of sequence names
+        positions
+            indices lying within self
+
+        Returns
+        -------
+            2D numpy.array, oriented by sequence
+
+        Raises
+        ------
+        IndexError if a provided position is negative or
+        greater then alignment length.
+        """
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
+            raise KeyError(msg)
+
+        min_index, max_index = numpy.min(positions), numpy.max(positions)
+        if min_index < 0 or max_index > self.align_len:
+            msg = f"Out of range: {min_index=} and / or {max_index=}"
+            raise IndexError(msg)
+
+        array_seqs = numpy.empty(
+            (len(names), len(positions)), dtype=self.alphabet.dtype
+        )
+        for index, name in enumerate(names):
+            array_seqs[index] = self.get_gapped_seq_array(seqid=name)[positions]
+
         return array_seqs
 
     def get_ungapped(
@@ -1136,22 +1260,26 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             msg = f"{start=}, {stop=}, {step=} not >= 0"
             raise ValueError(msg)
 
-        seq_array = numpy.empty(
-            (len(name_map), self.align_len),
-            dtype=self.alphabet.dtype,
-        )
         names = tuple(name_map.values())
-        for i, name in enumerate(names):
-            seq_array[i] = self.get_gapped_seq_array(seqid=name)
-        seq_array = seq_array[:, start:stop:step]
+        seq_array = self.get_pos_range(
+            names=names,
+            start=start,
+            stop=stop,
+            step=step,
+        )
         # now exclude gaps and missing
+        gap_index = self.alphabet.gap_index
+        missing_index = (
+            self.alphabet.missing_index
+            if self.alphabet.missing_index is not None
+            else -1
+        )
         seqs = {}
         for i, name in enumerate(names):
-            seq = seq_array[i]
-            indices = seq != self.alphabet.gap_index
-            if self.alphabet.missing_index is not None:
-                indices &= seq != self.alphabet.missing_index
-            seqs[name] = seq[indices]
+            seq, _ = c3_alignment.decompose_gapped_seq_array(
+                seq_array[i], gap_index=gap_index, missing_index=missing_index
+            )
+            seqs[name] = seq
 
         offset = {n: v for n, v in self.offset.items() if n in names}
         reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
@@ -1259,6 +1387,49 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             raise ValueError(msg)
         self._write(path=path, exclude_groups={self._ungapped_grp, self._gaps_grp})
 
+    def variable_positions(
+        self,
+        names: typing.Sequence[str],
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> numpy.ndarray:
+        """returns absolute indices of positions that have more than one state
+
+        Parameters
+        ----------
+        names
+            selected seqids
+        start
+            absolute start
+        stop
+            absolute stop
+        step
+            step
+
+        Returns
+        -------
+        Absolute indices (as distinct from an index relative to start) of
+        variable positions.
+        """
+        start = start or 0
+        if len(names) < 2:
+            return numpy.array([])
+
+        array_seqs = self.get_pos_range(names, start=start, stop=stop, step=step)
+        if array_seqs.size == 0:
+            return numpy.array([])
+
+        step = step or 1
+        indices = (array_seqs != array_seqs[0]).any(axis=0)
+        # because we need to return absolute indices, we add start
+        # to the result
+        indices = numpy.where(indices)[0]
+        if step > 1:
+            indices *= step
+        indices += start
+        return indices
+
 
 def _get_indices_diffs(
     ref_seq: SeqIntArrayType, seqarray: SeqIntArrayType
@@ -1295,17 +1466,73 @@ def _inflate_seq(
     return seqarray
 
 
+def _make_pointers(
+    *,
+    new_indices: list[NumpyIntArrayType],
+    old_pointers: Dataset | None = None,
+) -> NumpyIntArrayType:
+    # we are representing a multiple alignment as a sparse matrix
+    # the first row is complete
+    # all subsequent rows have only the indices and values of the seq
+    # that differ from the first row
+    # "pointers" record how many differences per seq and allow us to
+    # slice out each "seq" for reassembly
+    if old_pointers is None:
+        start = 0
+        old_pointers = numpy.array([0], dtype=numpy.int64)
+    else:
+        old_pointers = numpy.asarray(old_pointers)
+        start = old_pointers[-1]
+
+    num_diffs = [len(idx) for idx in new_indices]
+    # create the offsets given last value from old pointers
+    new_offsets = numpy.cumsum(num_diffs, dtype=old_pointers.dtype) + start
+    return typing.cast(
+        "NumpyIntArrayType", numpy.concatenate([old_pointers, new_offsets])
+    )
+
+
+def _update_sparse_elements(
+    *,
+    h5file: h5py.File,
+    new_elements: list[NumpyIntArrayType],
+    grp_name: str,
+    dtype: npt.DTypeLike,
+) -> NumpyIntArrayType:
+    old_elements = h5file.get(grp_name, [])[:]
+    if len(old_elements):
+        old_elements: list[NumpyIntArrayType] = [old_elements]
+
+    old_elements += new_elements
+    return numpy.concatenate(old_elements).astype(dtype)
+
+
+def _replace_grp_in_file(
+    *,
+    h5file: h5py.File,
+    compression: str | None,
+    grp_name: str,
+    new_value: NumpyIntArrayType,
+) -> None:
+    if grp_name in h5file:
+        del h5file[grp_name]
+
+    h5file.create_dataset(
+        grp_name, data=new_value, compression=compression, shuffle=True
+    )
+
+
 class SparseSeqsData(AlignedSeqsData):
     """sparse alignment data"""
 
-    _seqhash_grp: str = "seqhashes"
-    _gapped_grp: str = "gapped"
     _diff_idx_grp: str = "diff_indices"
     _diff_val_grp: str = "diff_vals"
-    _seq_ptr_grp: str = "seq_ptrs"
-    _ungapped_grp: str = "ungapped"
+    _gapped_grp: str = "gapped"
     _gaps_grp: str = "gaps"
+    _seq_ptr_grp: str = "seq_ptrs"
     _suffix: str = SPARSE_SUFFIX
+    _ungapped_grp: str = "ungapped"
+    _var_pos_grp: str = "variable_posns"
 
     def __init__(
         self,
@@ -1336,20 +1563,36 @@ class SparseSeqsData(AlignedSeqsData):
         self._ref_name = stored_ref_name or ref_name
         self._ref_hash: str = gapped_seqs.attrs.get("ref_hash", "")
         self._seqhashes: dict[str, int] = {}
-        self._ref_seq: SeqIntArrayType | None = None
-        self._seq_ptrs: NumpyIntArrayType | None = None
         self._attr_from_file()
+
+    @property
+    def _ref_seq(self) -> Dataset:
+        dataset = f"{self._primary_grp}/{self._ref_hash}"
+        if dataset not in self._file:
+            msg = "Reference sequence not found"
+            raise ValueError(msg)
+        return typing.cast("Dataset", self._file[dataset])
+
+    @property
+    def _seq_ptrs(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._seq_ptr_grp}"])
+
+    @property
+    def _diff_vals(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._diff_val_grp}"])
+
+    @property
+    def _diff_indices(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._diff_idx_grp}"])
+
+    @property
+    def _var_pos(self) -> Dataset:
+        return typing.cast("Dataset", self._file[f"{self._var_pos_grp}"])
 
     def _attr_from_file(self) -> None:
         if not self._ref_hash:
             return
 
-        self._ref_seq = typing.cast(
-            "SeqIntArrayType", self._file[f"{self._primary_grp}/{self._ref_hash}"]
-        )[:]
-        self._seq_ptrs = typing.cast(
-            "NumpyIntArrayType", self._file[f"{self._seq_ptr_grp}"]
-        )[:]
         n2h, h2i = _get_name2hash_hash2idx(self._file)
         self._name_to_hash = n2h
         self._hash_to_index = h2i
@@ -1357,15 +1600,12 @@ class SparseSeqsData(AlignedSeqsData):
     def _set_ref_seq(self, ref_name: str, ref_seq: SeqIntArrayType) -> str:
         self._ref_name = ref_name
         _assign_attr_if_missing(self._file, "ref_name", ref_name)
-        self._ref_seq = typing.cast(
-            "SeqIntArrayType", self.alphabet.to_indices(ref_seq)
-        )
-        self._ref_hash = array_hash64(self._ref_seq)
+        self._ref_hash = array_hash64(ref_seq)
         _assign_attr_if_missing(self._file, "ref_hash", self._ref_hash)
         dataset = f"{self._primary_grp}/{self._ref_hash}"
         self._file.create_dataset(
             name=dataset,
-            data=self._ref_seq,
+            data=ref_seq,
             chunks=True,
             compression=self._compress,
             shuffle=True,
@@ -1383,30 +1623,21 @@ class SparseSeqsData(AlignedSeqsData):
             self._file[f"{self._gapped_grp}/{self._ref_hash}"],
         ).shape[0]
 
-    def add_seqs(
+    def _seqs_to_sparse_arrays(
         self,
         seqs: dict[str, StrORBytesORArray],
-        force_unique_keys: bool = True,
-        offset: dict[str, int] | None = None,
-        reversed_seqs: frozenset[str] | None = None,
-        ref_name: str = "",
-        **kwargs: dict[str, typing.Any],
-    ) -> "UnalignedSeqsData":
-        lengths = {len(seq) for seq in seqs.values()}
-        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
-            msg = f"not all lengths equal {lengths=}"
-            raise ValueError(msg)
-
-        if not self.writable:
-            msg = "Cannot add sequences to a read-only file"
-            raise PermissionError(msg)
-
-        if self._ref_name and ref_name and ref_name != self._ref_name:
-            msg = f"provided {ref_name!r} does not match existing {self._ref_name!r}"
-            raise ValueError(msg)
-
+        force_unique_keys: bool,
+        ref_name: str,
+    ) -> tuple[
+        list[NumpyIntArrayType],
+        list[SeqIntArrayType],
+        dict[str, str],
+        dict[str, int],
+        int,
+    ]:
         ref_name = self._ref_name or ref_name
 
+        to_indices = self.alphabet.to_indices
         if not self._ref_hash:
             self._populate_attrs()
 
@@ -1417,7 +1648,7 @@ class SparseSeqsData(AlignedSeqsData):
             ref_name = ref_name or next(iter(seqs))
 
             ref_seq = typing.cast(
-                "SeqIntArrayType", self.alphabet.to_indices(seqs.pop(ref_name))
+                "SeqIntArrayType", to_indices(seqs.pop(ref_name), validate=True)
             )
             self._name_to_hash = {ref_name: self._set_ref_seq(ref_name, ref_seq)}
 
@@ -1442,22 +1673,55 @@ class SparseSeqsData(AlignedSeqsData):
             if overlap and seqid in overlap:
                 continue
 
-            seqarray = typing.cast("SeqIntArrayType", self.alphabet.to_indices(seq))
+            seqarray = typing.cast("SeqIntArrayType", to_indices(seq, validate=True))
             seqhash = array_hash64(seqarray)
             name_to_hash[seqid] = seqhash
             if seqhash in seqhash_to_names:
                 # same seq, different name
+                del seqarray
                 continue
+
             hash_to_index[seqhash] = len(hash_to_index)
             seqhash_to_names[seqhash].append(seqid)
             seqhashes.append(seqhash)
             indices, diffs = _get_indices_diffs(
-                typing.cast("SeqIntArrayType", self._ref_seq), seqarray
+                typing.cast("SeqIntArrayType", self._ref_seq[:]), seqarray
             )
             max_index = max(max_index, indices.max())
             diff_indices.append(indices)
             diff_vals.append(diffs)
 
+        return diff_indices, diff_vals, name_to_hash, hash_to_index, max_index
+
+    def add_seqs(
+        self,
+        seqs: dict[str, StrORBytesORArray],
+        force_unique_keys: bool = True,
+        offset: dict[str, int] | None = None,
+        reversed_seqs: frozenset[str] | None = None,
+        ref_name: str = "",
+        **kwargs: dict[str, typing.Any],
+    ) -> "SparseSeqsData":
+        if not self.writable:
+            msg = "Cannot add sequences to a read-only file"
+            raise PermissionError(msg)
+
+        lengths = {len(seq) for seq in seqs.values()}
+        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+            msg = f"not all lengths equal {lengths=}"
+            raise ValueError(msg)
+
+        if self._ref_name and ref_name and ref_name != self._ref_name:
+            msg = f"provided {ref_name!r} does not match existing {self._ref_name!r}"
+            raise ValueError(msg)
+
+        diff_indices, diff_vals, name_to_hash, hash_to_index, max_index = (
+            self._seqs_to_sparse_arrays(
+                seqs=seqs,
+                force_unique_keys=force_unique_keys,
+                ref_name=ref_name,
+            )
+        )
         if not diff_indices:
             # no unique sequences
             self._populate_optional_grps(
@@ -1465,30 +1729,62 @@ class SparseSeqsData(AlignedSeqsData):
             )
             return self
 
-        # how to handle case where there are already stored diffs etc...?
-        min_dtype = _best_uint_dtype(max_index)
-        all_indices = numpy.concatenate(diff_indices).astype(min_dtype)
-        all_vals = numpy.concatenate(diff_vals).astype(numpy.uint8)
-        row_ptrs = numpy.cumsum([0] + [len(d) for d in diff_indices], dtype=numpy.int32)
-        self._seq_ptrs = row_ptrs
-        self._file.create_dataset(
-            self._diff_idx_grp,
-            data=all_indices,
+        row_ptrs = _make_pointers(
+            old_pointers=self._file.get(self._seq_ptr_grp, None),
+            new_indices=diff_indices,
+        )
+        _replace_grp_in_file(
+            h5file=self._file,
             compression=self._compress,
-            shuffle=True,
+            grp_name=self._seq_ptr_grp,
+            new_value=row_ptrs,
         )
-        self._file.create_dataset(
-            self._diff_val_grp, data=all_vals, compression=self._compress, shuffle=True
+
+        # update the variant indices
+        min_dtype = _best_uint_dtype(max_index)
+        merged_indices = _update_sparse_elements(
+            h5file=self._file,
+            new_elements=diff_indices,
+            grp_name=self._diff_idx_grp,
+            dtype=min_dtype,
         )
-        self._file.create_dataset(
-            self._seq_ptr_grp, data=row_ptrs, compression=self._compress, shuffle=True
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._diff_idx_grp,
+            new_value=merged_indices,
         )
+
+        # update the variable position attribute
+        _replace_grp_in_file(
+            h5file=self._file,
+            grp_name=self._var_pos_grp,
+            compression=self._compress,
+            new_value=numpy.unique(self._diff_indices[:]),
+        )
+
+        # update the variant values
+        merged_vals = _update_sparse_elements(
+            h5file=self._file,
+            new_elements=diff_vals,
+            grp_name=self._diff_val_grp,
+            dtype=numpy.uint8,
+        )
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._diff_val_grp,
+            new_value=merged_vals,
+        )
+
         if offset := offset or {}:
             _set_offset(
                 self._file,
                 offset=self.offset | offset,
                 compression=self._compress,
             )
+
+        del merged_indices, merged_vals
 
         self._populate_optional_grps(offset, reversed_seqs, name_to_hash, hash_to_index)
         return self
@@ -1511,16 +1807,16 @@ class SparseSeqsData(AlignedSeqsData):
         index = self._hash_to_index[seqhash]
         seqarray = _inflate_seq(
             index=index,
-            ref_seq=self._ref_seq,
-            all_indices=self._file[self._diff_idx_grp][:],
-            all_values=self._file[self._diff_val_grp][:],
-            row_ptrs=self._seq_ptrs,
+            ref_seq=typing.cast("SeqIntArrayType", self._ref_seq[:]),
+            all_indices=self._diff_indices[:],
+            all_values=self._diff_vals[:],
+            row_ptrs=self._seq_ptrs[:],
         )
         return seqarray[start:stop:step]
 
-    def get_positions(
+    def get_pos_range(
         self,
-        names: list[str],
+        names: PySeqStrType,
         start: int | None = None,
         stop: int | None = None,
         step: int | None = None,
@@ -1540,15 +1836,23 @@ class SparseSeqsData(AlignedSeqsData):
         array_seqs = numpy.tile(
             typing.cast("SeqIntArrayType", self._ref_seq)[start:stop], (len(names), 1)
         )
+        if self._diff_idx_grp not in self._file:
+            return array_seqs[:, ::step]
+
+        all_indices = self._diff_indices[:]
+        all_values = self._diff_vals[:]
+        seq_ptrs = self._seq_ptrs[:]
         for index, name in enumerate(names):
-            if name == self._ref_name:
+            seqhash = self._name_to_hash[name]
+            if seqhash == self._ref_hash:
                 continue
-            seq_ptr_idx = self._hash_to_index[self._name_to_hash[name]]
+
+            seq_ptr_idx = self._hash_to_index[seqhash]
             indices, diffs = _get_diff_indices_vals_for_index(
                 index=seq_ptr_idx,
-                all_indices=self._file[self._diff_idx_grp][:],
-                all_values=self._file[self._diff_val_grp][:],
-                row_ptrs=self._seq_ptrs,
+                all_indices=all_indices,
+                all_values=all_values,
+                row_ptrs=seq_ptrs,
             )
             # select the indices and vals within start-stop
             within_range = (indices >= start) & (indices < stop)
@@ -1556,9 +1860,276 @@ class SparseSeqsData(AlignedSeqsData):
             indices = indices[within_range] - start
             diffs = diffs[within_range]
             array_seqs[index, indices] = diffs
+
         if step > 1:
             array_seqs = array_seqs[:, ::step]
         return array_seqs
+
+    def get_positions(
+        self,
+        names: typing.Sequence[str],
+        positions: typing.Sequence[int] | npt.NDArray[numpy.integer],
+    ) -> numpy.ndarray[numpy.uint8]:
+        """returns alignment positions for names
+
+        Parameters
+        ----------
+        names
+            series of sequence names
+        positions
+            indices lying within self
+
+        Returns
+        -------
+            2D numpy.array, oriented by sequence
+
+        Raises
+        ------
+        IndexError if a provided position is negative or
+        greater than the alignment length.
+        """
+        if not len(positions):
+            msg = "must provide positions"
+            raise NotImplementedError(msg)
+
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
+            raise KeyError(msg)
+
+        min_index, max_index = numpy.min(positions), numpy.max(positions)
+        if min_index < 0 or max_index > self.align_len:
+            msg = f"Out of range: {min_index=} and / or {max_index=}"
+            raise IndexError(msg)
+
+        # we get the hash indices, we don't include the same hash twice
+        # we need the hash index order to be sorted
+        n2h = self._name_to_hash
+        h2i = self._hash_to_index
+        ref_hash = self._ref_hash
+        ref_present = False
+        selected_hashes = {}
+        for n in names:
+            h = n2h[n]
+            if h == ref_hash:
+                # no work needed for matches to ref
+                ref_present = True
+                continue
+            i = h2i[h]
+            selected_hashes[h] = i
+
+        hash_indices = numpy.array(sorted(selected_hashes.values()), dtype=numpy.int64)
+        subalign = extract_subalignment(
+            ref_seq=typing.cast("npt.NDArray", self._ref_seq[:]),
+            all_indices=typing.cast("npt.NDArray", self._diff_indices[:]),
+            all_vals=typing.cast("npt.NDArray", self._diff_vals[:]),
+            seq_ptrs=typing.cast("npt.NDArray", self._seq_ptrs[:]),
+            seq_ids=hash_indices,
+            positions=numpy.array(positions),
+            ref_present=ref_present,
+        )
+        if ref_present:
+            selected_hashes[self._ref_hash] = len(self.names)
+
+        seq_indices = names_to_relative_indices(
+            names=names,
+            subset_hashes=set(selected_hashes.keys()),
+            name_to_hash=self._name_to_hash,
+            hash_to_index=selected_hashes,
+        )
+        return subalign[seq_indices]
+
+    def variable_positions(
+        self,
+        names: PySeqStrType,
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> numpy.ndarray[numpy.integer]:
+        """returns absolute indices of positions that have more than one state
+
+        Parameters
+        ----------
+        names
+            selected seqids
+        start
+            absolute start
+        stop
+            absolute stop
+        step
+            step
+
+        Returns
+        -------
+        Absolute indices (as distinct from an index relative to start) of
+        variable positions.
+        """
+        if len(names) < 2 or not self._hash_to_index:
+            # no seqs, too few, or all identical
+            return numpy.array([], dtype=numpy.int64)
+
+        var_pos = self._var_pos[:]
+        if start is None and stop is None and step is None:
+            return var_pos
+
+        start = start or 0
+        stop = stop or self.align_len
+        step = step or 1
+        indices = (var_pos >= start) & (var_pos < stop)
+        var_pos = var_pos[indices]
+        if step > 1:
+            var_pos = var_pos[(var_pos - start) % step == 0]
+        return var_pos
+
+    def get_ungapped(
+        self,
+        name_map: dict[str, str],
+        start: int | None = None,
+        stop: int | None = None,
+        step: int | None = None,
+    ) -> tuple[dict, dict]:
+        if (start or 0) < 0 or (stop or 0) < 0 or (step or 1) <= 0:
+            msg = f"{start=}, {stop=}, {step=} not >= 0"
+            raise ValueError(msg)
+
+        names = tuple(name_map.values())
+        seq_array = self.get_pos_range(
+            names=names,
+            start=start,
+            stop=stop,
+            step=step,
+        )
+        # now exclude gaps and missing
+        gap_index = self.alphabet.gap_index
+        missing_index = self.alphabet.missing_index or -1
+        seq_array, seq_lengths = remove_gaps(seq_array, gap_index, missing_index)
+        seqs = {name: seq_array[i, : seq_lengths[i]] for i, name in enumerate(names)}
+        offset = {n: v for n, v in self.offset.items() if n in names}
+        reversed_seqs = self.reversed_seqs.intersection(name_map.keys())
+        return seqs, {
+            "offset": offset,
+            "name_map": name_map,
+            "reversed_seqs": reversed_seqs,
+        }
+
+
+def names_to_relative_indices(
+    *,
+    names: typing.Sequence[str],
+    subset_hashes: set[str],
+    name_to_hash: dict[str, str],
+    hash_to_index: dict[str, int],
+) -> list[int]:
+    """
+    returns relative indices for names into their hash subset
+
+    Parameters
+    ----------
+    names
+        sequence names.
+    name_to_hash
+        {name: sequence hash, ...}
+    hash_to_index
+        {hash: hash order, ...}
+
+    Returns
+    -------
+    Relative indices that map names onto the subset of hashes.
+    """
+    ordered_hashes = sorted(subset_hashes, key=lambda h: hash_to_index[h])
+    hash_to_rel = {h: i for i, h in enumerate(ordered_hashes)}
+    # translate names into relative indices
+    return [hash_to_rel[name_to_hash[n]] for n in names]
+
+
+@numba.njit(cache=True)
+def extract_subalignment(
+    ref_seq: npt.NDArray[numpy.uint8],
+    all_indices: npt.NDArray[numpy.integer],
+    all_vals: npt.NDArray[numpy.integer],
+    seq_ptrs: npt.NDArray[numpy.integer],
+    seq_ids: npt.NDArray[numpy.integer],
+    positions: npt.NDArray[numpy.integer],
+    ref_present: bool,
+) -> SeqIntArrayType:
+    """
+    Extracts a dense subalignment matrix from sparse CSR-like MSA,
+    optimized for when `positions` is sorted.
+
+    Parameters
+    ----------
+    ref_seq
+        Reference sequence.
+    all_indices
+        Concatenated positions of differences (sorted within each seq).
+    all_vals
+        Values corresponding to `all_indices`.
+    seq_ptrs
+        CSR row pointer array
+    seq_ids
+        Sequence indices to extract.
+    positions
+        Alignment column positions to extract (must be sorted).
+    ref_present
+        the reference sequence is present, this will be the last
+        row in the result object
+
+    Returns
+    -------
+    numpy.ndarray (uint8) of shape (len(seq_ids), len(positions))
+    """
+    num_seqs = len(seq_ids)
+    num_pos = len(positions)
+
+    # initialize with reference sequence values
+    ref_vals = ref_seq[positions]
+    num_rows = num_seqs + 1 if ref_present else num_seqs
+    result = numpy.empty((num_rows, num_pos), dtype=numpy.uint8)
+    result[:, numpy.arange(ref_vals.size)] = ref_vals
+
+    for i in range(num_seqs):
+        seq_id = seq_ids[i]
+        start = seq_ptrs[seq_id]
+        end = seq_ptrs[seq_id + 1]
+
+        idxs = all_indices[start:end]
+        vals = all_vals[start:end]
+
+        # a merge scan assuming positions and idxs are sorted
+        idx_ptr = 0  # index in idxs
+        pos_ptr = 0  # index in positions
+
+        while idx_ptr < len(idxs) and pos_ptr < num_pos:
+            pos = positions[pos_ptr]
+
+            if idxs[idx_ptr] < pos:
+                idx_ptr += 1
+            elif idxs[idx_ptr] > pos:
+                pos_ptr += 1
+            else:
+                # populate this sequence difference
+                result[i, pos_ptr] = vals[idx_ptr]
+                idx_ptr += 1
+                pos_ptr += 1
+
+    return result
+
+
+@numba.njit(cache=True)
+def remove_gaps(arr, gap_index, missing_index=-1):
+    nrows, ncols = arr.shape
+    num_non_gaps = numpy.empty(nrows, dtype=numpy.int32)
+    if missing_index == -1:
+        missing_index = gap_index
+
+    for i in range(nrows):
+        write_pos = 0
+        for j in range(ncols):
+            val = arr[i, j]
+            if val not in (gap_index, missing_index):
+                arr[i, write_pos] = val
+                write_pos += 1
+        num_non_gaps[i] = write_pos
+    return arr, num_non_gaps
 
 
 @functools.singledispatch
@@ -1600,7 +2171,7 @@ def _(
 
     if alphabet is None:
         mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
             gap=h5file.attrs.get("gap_char"),
             missing=h5file.attrs.get("missing_char"),
@@ -1703,7 +2274,7 @@ def make_aligned(
 
     if alphabet is None:
         mt = c3_moltype.get_moltype(h5file.attrs.get("moltype"))
-        alphabet = c3_alphabet.make_alphabet(
+        alphabet = _restore_alphabet(
             chars=h5file.attrs["alphabet"],
             gap=h5file.attrs["gap_char"],
             missing=h5file.attrs["missing_char"],

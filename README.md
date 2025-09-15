@@ -18,6 +18,20 @@ pip install cogent3-h5seqs
 
 ## Usage
 
+### Three types of sequence storage
+
+#### Unaligned sequences
+
+For sequences that may not be the same length, select `c3h5u`, or `h5seqs_unaligned`.
+
+#### Aligned sequences, full storage
+
+For sequences that must be the same length, select `c3h5a`, or `h5seqs_aligned`. This is a dense storage format whete every sequence is stored separately.
+
+#### Aligned sequences, sparse storage
+
+For sequences that must be the same length, select `c3h5s`, or `h5seqs_sparse`. This is uses a sparse matrix for storage reducing memory and storage requirements. Faster to create and write than the dense variant.
+
 ### Making `cogent3-h5seqs` the default storage
 
 Using `cogent3.set_storage_defaults()`, you can set `cogent3-h5seqs` as the default storage. This means whenever a sequence collection is loaded from disk or created in memory, it will use the storage within this package.
@@ -27,15 +41,17 @@ The following statement makes `cogent3-h5seqs` the default for both unaligned an
 ```python
 import cogent3
 
-cogent3.set_storage_defaults(unaligned_seqs="h5seqs_unaligned",
-                             aligned_seqs="h5seqs_aligned")
+cogent3.set_storage_defaults(unaligned_seqs="c3h5u",
+                             aligned_seqs="c3h5a")
 ```
 
 You can undo this setting by
 
 ```python
-cogent3.set_storage_defaults(unaligned_seqs=None, aligned_seqs=None)
+cogent3.set_storage_defaults(reset=True)
 ```
+
+Equivalently, you could define 
 
 ### Using `cogent3-h5seqs` as storage per object
 
@@ -52,13 +68,13 @@ or, for alignments.
 ```python
 aln = cogent3.load_aligned_seqs(some_path,
                                    moltype="dna",
-                                   storage_backend="h5seqs_aligned")
+                                   storage_backend="c3h5s")
 ```
 
 The same values can also be provided to the `make_unaligned_seqs()`, `make_aligned_seqs()` functions in `cogent3`.
 
 > **Note**
-> You can turn off compression with `compression=False`. This will speed up operations.
+> You can turn off compression with `compression=False`. This can speed up operations.
 
 ### Saving storage to disk
 
@@ -68,7 +84,7 @@ The same values can also be provided to the `make_unaligned_seqs()`, `make_align
 import cogent3
 
 sample_aln = cogent3.get_dataset("brca1")  # using the cogent3 builtin storage
-outpath = "~/Desktop/alignment_output.c3h5a"
+outpath = "~/Desktop/alignment_output.c3h5s"
 sample_aln.write(outpath)  # writes out as cogent3-h5seqs HDF5 storage
 ```
 

@@ -1,3 +1,4 @@
+import itertools
 import pathlib
 
 import cogent3
@@ -24,13 +25,9 @@ c3h5_load_funcs = {
 }
 
 
-def make_sparse(*args, **kwargs):
-    return cogent3_h5seqs.make_aligned(*args, sparse=True, **kwargs)
-
-
 c3h5_make_funcs = {
     cogent3_h5seqs.ALIGNED_SUFFIX: cogent3_h5seqs.make_aligned,
-    cogent3_h5seqs.SPARSE_SUFFIX: make_sparse,
+    cogent3_h5seqs.SPARSE_SUFFIX: cogent3_h5seqs.make_sparse,
     cogent3_h5seqs.UNALIGNED_SUFFIX: cogent3_h5seqs.make_unaligned,
 }
 
@@ -45,7 +42,7 @@ def raw_data():
     return {"s1": "ACGG", "s2": "TGGGCAGTA"}
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture
 def raw_aligned_data():
     return {"s1": "TGG--ACGG", "s2": "TGGGCAGTA"}
 
@@ -697,7 +694,7 @@ def test_write_aligned(raw_aligned_data, suffix, tmp_path, out_name):
         cogent3_h5seqs.SPARSE_SUFFIX,
     ],
 )
-def test_get_positions(raw_aligned_data, suffix):
+def test_get_pos_range(raw_aligned_data, suffix):
     c3 = cogent3.make_aligned_seqs(
         raw_aligned_data, moltype="dna", storage_backend=None
     )
@@ -720,7 +717,7 @@ def test_get_positions_invalid_coord(raw_aligned_data, arg, suffix):
         raw_aligned_data, moltype="dna", storage_backend=suffix
     )
     with pytest.raises(ValueError):
-        h5.storage.get_positions(names=["s1", "s2"], **{arg: -1})
+        h5.storage.get_pos_range(names=["s1", "s2"], **{arg: -1})
 
 
 def test_set_as_default_drivers_unaligned(raw_aligned_data):
@@ -733,6 +730,34 @@ def test_set_as_default_drivers_unaligned(raw_aligned_data):
 
     coll = cogent3.make_unaligned_seqs(raw_aligned_data, moltype="dna")
     assert not isinstance(coll.storage, cogent3_h5seqs.UnalignedSeqsData)
+
+
+@pytest.mark.parametrize(
+    "storage",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        "h5seqs_aligned",
+        "h5seqs_sparse",
+    ],
+)
+def test_set_as_default_drivers_aligned(raw_aligned_data, storage):
+    classes = {
+        cls._suffix: cls
+        for cls in [cogent3_h5seqs.AlignedSeqsData, cogent3_h5seqs.SparseSeqsData]
+    }
+    classes["h5seqs_aligned"] = cogent3_h5seqs.AlignedSeqsData
+    classes["h5seqs_sparse"] = cogent3_h5seqs.SparseSeqsData
+
+    cogent3.set_storage_defaults(aligned_seqs=storage)
+
+    coll = cogent3.make_aligned_seqs(raw_aligned_data, moltype="dna")
+    assert isinstance(coll.storage, classes[storage])
+
+    cogent3.set_storage_defaults(reset=True)
+
+    coll = cogent3.make_aligned_seqs(raw_aligned_data, moltype="dna")
+    assert not isinstance(coll.storage, classes[storage])
 
 
 @pytest.mark.parametrize(
@@ -914,7 +939,7 @@ def test_get_gapped_seq_array_invalidseqid(fxt, request):
 def test_get_positions_invalid_name(fxt, request):
     obj = request.getfixturevalue(fxt)
     with pytest.raises(KeyError):
-        obj.get_positions(names=["missing"])
+        obj.get_pos_range(names=["missing"])
 
 
 @pytest.mark.parametrize(
@@ -925,13 +950,13 @@ def test_get_valid_positions(suffix, dna_alpha):
     data = {"s1": "TGG--ACGG", "s2": "TGGGCAGTA", "s3": "---GCACTG"}
     obj = func(None, data=data.copy(), in_memory=True, alphabet=dna_alpha)
     full = numpy.array([dna_alpha.to_indices(data[n]) for n in obj.names])
-    got = obj.get_positions(obj.names)
+    got = obj.get_pos_range(obj.names)
     numpy.testing.assert_equal(got, full)
     sl = slice(2, 8)
-    got = obj.get_positions(obj.names, start=sl.start, stop=sl.stop)
+    got = obj.get_pos_range(obj.names, start=sl.start, stop=sl.stop)
     numpy.testing.assert_equal(got, full[:, sl])
     sl = slice(2, 8, 2)
-    got = obj.get_positions(obj.names, start=sl.start, stop=sl.stop, step=sl.step)
+    got = obj.get_pos_range(obj.names, start=sl.start, stop=sl.stop, step=sl.step)
     numpy.testing.assert_equal(got, full[:, sl])
 
 
@@ -1139,6 +1164,22 @@ def test_repr(raw_aligned_data, dna_alpha, suffix):
     assert part in repr(obj)
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
+)
+def test_repr_bytes(raw_aligned_data, suffix):
+    alpha = cogent3.get_moltype("bytes").most_degen_alphabet()
+    make_func = c3h5_make_funcs[suffix]
+    obj = make_func("memory", data=raw_aligned_data, mode="w", alphabet=alpha)
+    part = "alphabet=bytes"
+    assert part in repr(obj)
+
+
 def test_set_name_to_hash_no_data():
     h5file = cogent3_h5seqs.open_h5_file("memory", mode="w")
     # this should not fail
@@ -1311,3 +1352,261 @@ def test_get_seq_length_with_wout_gaps_present(small_aligned_sparse):
 def test_selecting_dtype():
     with pytest.raises(ValueError):
         cogent3_h5seqs._best_uint_dtype(2**64 + 10)  # noqa: SLF001
+
+
+def test_make_seqs_invalid_chars():
+    from cogent3.core.alphabet import AlphabetError
+
+    data = {"seq1": "AGT1CCT", "seq2": "AGT$CCC"}
+    with pytest.raises(AlphabetError):
+        cogent3.make_aligned_seqs(data, moltype="dna", storage_backend="c3h5s")
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
+)
+def test_get_positions_identical_seqs(suffix, dna_alpha):
+    """correctly identify variable positions"""
+    seq = "GCGAC"
+    new_seqs = {"A": seq, "B": seq, "C": seq}
+    obj = c3h5_make_funcs[suffix](
+        None, data=new_seqs, alphabet=dna_alpha, in_memory=True
+    )
+    array = obj.get_pos_range(names=["A", "B", "C"])
+    assert numpy.all(array == dna_alpha.to_indices(seq), axis=1).all()
+
+
+def test_omit_bad_seqs():
+    """omit_bad_seqs should return alignment w/o seqs causing most gaps"""
+    data = {
+        "s1": "---ACC---TT-",
+        "s2": "---ACC---TT-",
+        "s3": "---ACC---TT-",
+        "s4": "--AACCG-GTT-",
+        "s5": "--AACCGGGTTT",
+        "s6": "AGAACCGGGTT-",
+    }
+
+    aln = cogent3.make_aligned_seqs(data, moltype="dna", storage_backend="c3h5s")
+    # with defaults, excludes s6
+    expect = data.copy()
+    del expect["s6"]
+    result = aln.omit_bad_seqs()
+    assert result.to_dict() == expect
+    # with quantile 0.5, just s1, s2, s3
+    expect = data.copy()
+    for key in ("s6", "s5"):
+        del expect[key]
+    result = aln.omit_bad_seqs(0.5)
+    assert result.to_dict() == expect
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
+)
+def test_aln_multi_add_seqs(suffix):
+    data = {"name1": "AAA", "name2": "A--", "name3": "AAA", "name4": "AAA"}
+    data2 = {"name5": "TTT", "name6": "---"}
+    aln = cogent3.make_aligned_seqs(data, moltype="dna", storage_backend=suffix)
+    out_aln = aln.add_seqs(data2)
+    assert len(out_aln.names) == 6
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
+)
+def test_counts_per_seq_bytes_moltype(suffix):
+    """produce correct counts per seq with text moltypes"""
+    data = {"a": "AAAA??????", "b": "CCCGGG--NN", "c": "CCGGTTCCAA"}
+    coll = cogent3.make_aligned_seqs(data, moltype="bytes", storage_backend=suffix)
+    got = coll.counts_per_seq(include_ambiguity=True, allow_gap=True)
+    assert got.col_sum()[b"-"] == 2
+    assert got.col_sum()[b"?"] == 6
+    assert got.col_sum()[b"T"] == 2
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
+)
+def test_pickling_in_memory(suffix, dna_alpha):
+    # always fails
+    import pickle
+
+    raw = {"s1": "ACG-T", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw, in_memory=True, alphabet=dna_alpha)
+    with pytest.raises(pickle.PicklingError):
+        pickle.dumps(obj)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+        cogent3_h5seqs.UNALIGNED_SUFFIX,
+    ],
+)
+def test_pickling_on_disk(suffix, dna_alpha, tmp_path):
+    import pickle
+
+    outpath = tmp_path / f"test.{suffix}"
+    raw = {"s1": "ACG-T", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](
+        outpath, data=raw.copy(), alphabet=dna_alpha, mode="w"
+    )
+    obj.write(outpath)
+    obj.close()
+    obj = c3h5_load_funcs[suffix](outpath, mode="r")
+    pickled = pickle.dumps(obj)
+    unpickled = pickle.loads(pickled)
+    names = unpickled.names
+
+    assert set(names) == set(raw.keys())
+    unpickled.close()
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_variable_positions(suffix, dna_alpha):
+    raw = {"s1": "ACGGT", "s2": "ACGGT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw.copy(), alphabet=dna_alpha, mode="w")
+    pos = obj.variable_positions(obj.names)
+    assert pos.size == 0
+    raw = {"s1": "ACGGT", "s2": "ACGAT"}
+    obj = c3h5_make_funcs[suffix](None, data=raw.copy(), alphabet=dna_alpha, mode="w")
+    pos = obj.variable_positions(obj.names)
+    assert pos.size == 1
+    assert pos[0] == 3
+    cols = obj.get_positions(obj.names, pos)
+    expect = numpy.array([[3], [2]], dtype=numpy.uint8)
+    assert (cols == expect).all()
+    pos = obj.variable_positions(obj.names, start=1)
+    assert pos.size == 1
+    # position values are absolute, i.e. start should have no effect
+    assert pos[0] == 3
+    # no variable positions within segment
+    pos = obj.variable_positions(obj.names, stop=3)
+    assert pos.size == 0
+    # no variable positions modulo 2
+    pos = obj.variable_positions(obj.names, step=2)
+    assert pos.size == 0
+    # no variable positions modulo 2, unless we start from 1
+    pos = obj.variable_positions(obj.names, start=1, step=2)
+    assert pos.size == 1
+    assert pos[0] == 3
+
+
+@pytest.fixture
+def raw_5seq_pos():
+    return {
+        "s1": "ACCTG",
+        "s2": "-CCAG",
+        "s3": "ACCTG",  # same as s1
+        "s4": "ACC-A",
+        "s5": "TCCTG",
+    }
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+@pytest.mark.parametrize(
+    "names", list(itertools.combinations(["s1", "s2", "s3", "s4", "s5"], 3))
+)
+def test_variable_positions_subset_seqs(raw_5seq_pos, suffix, dna_alpha, names):
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    aln = cogent3.make_aligned_seqs(array_data, moltype="dna", storage_backend=suffix)
+    sub = aln.take_seqs(names)
+    array_seqs = sub.array_seqs
+    expect = tuple(numpy.where((array_seqs != array_seqs[0]).any(axis=0))[0])
+    got = sub.variable_positions(include_gap_motif=True)
+    assert got == expect
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_variable_positions_subset_diff_to_whole(raw_5seq_pos, suffix, dna_alpha):
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    aln = cogent3.make_aligned_seqs(array_data, moltype="dna", storage_backend=suffix)
+    sub = aln.take_seqs(["s1", "s3"])
+    assert sub.storage is aln.storage
+    array_seqs = sub.array_seqs
+    expect = tuple(numpy.where((array_seqs != array_seqs[0]).any(axis=0))[0])
+    got = sub.variable_positions(include_gap_motif=True)
+    assert got == expect
+    assert sub.variable_positions(include_gap_motif=True) != aln.variable_positions(
+        include_gap_motif=True
+    )
+
+
+@pytest.mark.parametrize(
+    "names",
+    [["s1", "s2", "s3", "s4", "s5"], ["s2", "s3", "s4"], ["s5", "s1", "s3", "s4"]],
+)
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_get_positions_name_order(raw_5seq_pos, dna_alpha, names, suffix):
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    expect = numpy.array([array_data[n] for n in names], dtype=dna_alpha.dtype)
+    obj = c3h5_make_funcs[suffix](
+        None, data=raw_5seq_pos.copy(), alphabet=dna_alpha, mode="w"
+    )
+    got = obj.get_positions(names=names, positions=numpy.arange(expect.shape[1]))
+    assert (got == expect).all()
+
+
+@pytest.mark.parametrize(
+    "posns",
+    [[0, 1, 2], [0, 3, 4], [1, 2, 4]],
+)
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+def test_get_positions_posns(raw_5seq_pos, dna_alpha, posns, suffix):
+    names = sorted(raw_5seq_pos.keys())
+    array_data = {n: dna_alpha.to_indices(s) for n, s in raw_5seq_pos.items()}
+    expect = numpy.array([array_data[n][posns] for n in names], dtype=dna_alpha.dtype)
+    obj = c3h5_make_funcs[suffix](
+        None, data=raw_5seq_pos.copy(), alphabet=dna_alpha, mode="w"
+    )
+    got = obj.get_positions(names=names, positions=posns)
+    assert (got == expect).all()
+
+
+def test_sparse_write_read(tmp_path, raw_5seq_pos):
+    aln = cogent3.make_aligned_seqs(raw_5seq_pos.copy(), moltype="dna")
+    outpath = tmp_path / f"demo.{cogent3_h5seqs.SPARSE_SUFFIX}"
+    aln.write(outpath)
+    ld = cogent3.load_aligned_seqs(outpath, moltype="dna")
+    assert ld.to_dict() == raw_5seq_pos
