@@ -1792,10 +1792,6 @@ class SparseSeqsData(AlignedSeqsData):
         step: int,
     ) -> SeqIntArrayType:
         seqhash = self.get_hash(seqid=seqid)
-        if seqhash is None:
-            msg = f"seqid {seqid!r} not found"
-            raise KeyError(msg)
-
         if seqhash == self._ref_hash:
             return typing.cast("SeqIntArrayType", self._ref_seq)[start:stop:step]
 
@@ -1823,8 +1819,8 @@ class SparseSeqsData(AlignedSeqsData):
             msg = f"{start=}, {stop=}, {step=} not >= 1"
             raise ValueError(msg)
 
-        if missing := set(names) - set(self.names):
-            msg = f"Some sequences not found: {missing}"
+        if diff := self._invalid_seqids(names):
+            msg = f"these names not present {diff}"
             raise KeyError(msg)
 
         # we don't apply step yet to make applying diffs more efficient

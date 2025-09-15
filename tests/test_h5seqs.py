@@ -909,6 +909,14 @@ def test_get_gapped_seq_invalid_pos(fxt, request, arg):
 
 
 @pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
+@pytest.mark.parametrize("arg", ["start", "stop", "step"])
+def test_get_gapped_seq_invalid_seqid(fxt, request, arg):
+    obj = request.getfixturevalue(fxt)
+    with pytest.raises(KeyError):
+        obj.get_gapped_seq_array(seqid="s99")
+
+
+@pytest.mark.parametrize("fxt", ["small_aligned", "small_aligned_sparse"])
 def test_get_gapped_seq_str(fxt, request, raw_aligned_data):
     obj = request.getfixturevalue(fxt)
     got = obj[0]
