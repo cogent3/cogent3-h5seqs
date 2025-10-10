@@ -25,6 +25,22 @@ __version__ = "0.7.0"
 if typing.TYPE_CHECKING:  # pragma: no cover
     from cogent3.core.alignment import Alignment, SequenceCollection
 
+# handle module refactoring in cogent3
+
+try:
+    AlignedDataView = c3_alignment.AlignedDataView
+    SeqDataView = c3_alignment.SeqDataView
+    SliceRecord = c3_sequence.SliceRecord
+    decompose_gapped_seq = c3_alignment.decompose_gapped_seq
+    compose_gapped_seq = c3_alignment.compose_gapped_seq
+except AttributeError:  # pragma: no cover
+    from cogent3.core.seq_storage import compose_gapped_seq, decompose_gapped_seq
+    from cogent3.core.seqview import (  # type: ignore[no-redef]
+        AlignedDataView,
+        SeqDataView,
+    )
+    from cogent3.core.slice_record import SliceRecord
+
 
 UNALIGNED_SUFFIX = "c3h5u"
 ALIGNED_SUFFIX = "c3h5a"
@@ -33,6 +49,7 @@ DEFAULT_COMPRESSION = "lzf"
 
 SeqCollTypes = typing.Union["SequenceCollection", "Alignment"]
 StrORBytesORArray = str | bytes | numpy.ndarray
+StrOrBytes = str | bytes
 NumpyIntArrayType = npt.NDArray[numpy.integer]
 SeqIntArrayType = npt.NDArray[numpy.unsignedinteger]
 PySeqStrType = typing.Sequence[str]
@@ -268,8 +285,8 @@ def _restore_alphabet(
     *,
     chars: bytes | str,
     moltype: str,
-    gap: c3_alphabet.StrOrBytes | None,
-    missing: c3_alphabet.StrOrBytes | None,
+    gap: StrOrBytes | None,
+    missing: StrOrBytes | None,
 ) -> c3_alphabet.CharAlphabet:
     if isinstance(chars, bytes):
         with contextlib.suppress(UnicodeDecodeError):
@@ -364,6 +381,18 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if not _valid_h5seqs(file, cls._ungapped_grp):
             msg = f"File {file} is not a valid {cls.__name__} file"
             raise ValueError(msg)
+
+    @classmethod
+    def new_type(cls, file: h5py.File) -> bool:
+        if not file.keys() or _valid_h5seqs(file, cls._ungapped_grp):
+            # no keys means no groups
+            return True
+
+        if cls._ungapped_grp in file:
+            return False
+
+        msg = f"File {file} is not a valid {cls.__name__} file"
+        raise ValueError(msg)
 
     def _populate_attrs(self) -> None:
         if self._attr_set:
@@ -521,16 +550,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return seqid in self._name_to_hash
 
     @functools.singledispatchmethod
-    def __getitem__(self, index: str | int) -> c3_alignment.SeqDataView:
+    def __getitem__(self, index: str | int) -> SeqDataView:
         msg = f"__getitem__ not implemented for {type(index)}"
         raise TypeError(msg)
 
     @__getitem__.register
-    def _(self, index: str) -> c3_alignment.SeqDataView:
+    def _(self, index: str) -> SeqDataView:
         return self.get_view(index)
 
     @__getitem__.register
-    def _(self, index: int) -> c3_alignment.SeqDataView:
+    def _(self, index: int) -> SeqDataView:
         return self[self.names[index]]
 
     def __len__(self) -> int:
@@ -781,8 +810,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             self.get_seq_array(seqid=seqid, start=start, stop=stop, step=step)
         )
 
-    def get_view(self, seqid: str) -> c3_alignment.SeqDataView:
-        return c3_alignment.SeqDataView(
+    def get_view(self, seqid: str) -> SeqDataView:
+        return SeqDataView(
             parent=self,
             seqid=seqid,
             parent_len=self.get_seq_length(seqid=seqid),
@@ -846,13 +875,22 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
     ) -> "UnalignedSeqsData":
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
+        if not cls.new_type(h5file):
+            data = _data_from_file(h5file, cls._ungapped_grp)
+        else:
+            data = None
+
         alphabet = _restore_alphabet(
             chars=h5file.attrs.get("alphabet"),
             moltype=c3_moltype.get_moltype(h5file.attrs.get("moltype")),
             missing=h5file.attrs.get("missing_char") or None,
             gap=h5file.attrs.get("gap_char") or None,
         )
-        return cls(data=h5file, alphabet=alphabet, check=check)
+
+        result = cls(data=h5file, alphabet=alphabet, check=check)
+        if data:
+            result = result.add_seqs(data)
+        return result
 
     def _write(self, path: str | pathlib.Path, exclude_groups: set[str]) -> None:
         path = pathlib.Path(path).expanduser().absolute()
@@ -1010,7 +1048,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         data = {}
         for seqid, seq in seqs.items():
             gp = gaps[seqid]
-            gapped = c3_alignment.compose_gapped_seq(
+            gapped = compose_gapped_seq(
                 ungapped_seq=seq,
                 gaps=gp,
                 gap_index=alphabet.gap_index,
@@ -1069,7 +1107,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             msg = f"Sequence {seqid!r} not found"
             raise KeyError(msg)
 
-        ungapped, gaps = c3_alignment.decompose_gapped_seq(
+        ungapped, gaps = decompose_gapped_seq(
             self.get_gapped_seq_array(seqid=seqid),
             alphabet=self.alphabet,
         )
@@ -1170,9 +1208,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     def get_view(
         self,
         seqid: str,
-        slice_record: c3_sequence.SliceRecord | None = None,
-    ) -> c3_alignment.AlignedDataView:
-        return c3_alignment.AlignedDataView(
+        slice_record: SliceRecord | None = None,
+    ) -> AlignedDataView:
+        return AlignedDataView(
             parent=self,
             seqid=seqid,
             alphabet=self.alphabet,
@@ -2110,6 +2148,14 @@ def make_unaligned(
     raise TypeError(msg)
 
 
+def _data_from_file(h5file: h5py.File, grp: str) -> dict[str, npt.NDArray]:
+    data = {}
+    for dataset in h5file[grp]:
+        data[dataset] = h5file[grp][dataset][:]
+    del h5file[grp]
+    return data
+
+
 @make_unaligned.register
 def _(
     path: str,
@@ -2279,6 +2325,7 @@ def load_seqs_data_unaligned(
     if path.suffix != f".{suffix}":
         msg = f"File {path} does not have an expected suffix {suffix!r}"
         raise ValueError(msg)
+
     klass = UnalignedSeqsData
     result = klass.from_file(path=path, mode=mode, check=check)
     result.filename_suffix = suffix
