@@ -7,7 +7,7 @@ license = { file = "LICENSE" }
 authors = [
     { name = "Gavin Huttley", email = "Gavin.Huttley@anu.edu.au" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "cogent3>=2025.9.8a2",
     "h5py>=3.13.0",
@@ -24,7 +24,6 @@ classifiers = [
         "Topic :: Scientific/Engineering :: Bio-Informatics",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Operating System :: OS Independent",
-        "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
