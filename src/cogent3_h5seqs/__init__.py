@@ -549,18 +549,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             self._hash_to_index = h2i
         return seqid in self._name_to_hash
 
-    @functools.singledispatchmethod
     def __getitem__(self, index: str | int) -> SeqDataView:
+        if isinstance(index, int):
+            return self[self.names[index]]
+
+        if isinstance(index, str):
+            return self.get_view(index)
+
         msg = f"__getitem__ not implemented for {type(index)}"
         raise TypeError(msg)
-
-    @__getitem__.register
-    def _(self, index: str) -> SeqDataView:
-        return self.get_view(index)
-
-    @__getitem__.register
-    def _(self, index: int) -> SeqDataView:
-        return self[self.names[index]]
 
     def __len__(self) -> int:
         return len(self.names)
