@@ -94,7 +94,7 @@ def test_make_unaligned(raw_data, offset, dna_alpha):
     assert ua.get_seq_str(seqid="s2") == raw_data["s2"]
     assert ua.get_seq_bytes(seqid="s2") == raw_data["s2"].encode("utf-8")
     assert ua.get_seq_length(seqid="s1") == len(raw_data["s1"])
-    assert ua.offset == offset_expect
+    assert {k: ua.offset[k] for k in offset_expect} == offset_expect
     assert ua.reversed_seqs == frozenset()
 
 

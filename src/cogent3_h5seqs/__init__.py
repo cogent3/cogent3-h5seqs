@@ -573,7 +573,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def offset(self) -> dict[str, int]:
-        all_offsets = dict.fromkeys(self.names, 0)
+        all_offsets = typing.cast("dict[str, int]", collections.defaultdict(int))
         if "offset" not in self._file:
             return all_offsets
 
