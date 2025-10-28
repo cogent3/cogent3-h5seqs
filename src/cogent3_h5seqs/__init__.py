@@ -813,7 +813,6 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             seqid=seqid,
             parent_len=self.get_seq_length(seqid=seqid),
             alphabet=self.alphabet,
-            offset=self.offset.get(seqid, 0),
         )
 
     def get_seq_length(self, seqid: str) -> int:
