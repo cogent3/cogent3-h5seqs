@@ -1711,3 +1711,26 @@ def test_sparse_write_read(tmp_path, raw_5seq_pos):
     aln.write(outpath)
     ld = cogent3.load_aligned_seqs(outpath, moltype="dna")
     assert ld.to_dict() == raw_5seq_pos
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+@pytest.mark.parametrize("name", ["a", "b"])
+def test_made_seq_offset(suffix, name):
+    mk_cls = c3_make_funcs[suffix]
+    data = {"a": "AGGCCC", "b": "AGAAAA"}
+    offset = {"a": 1, "b": 2}
+    coll = mk_cls(data, moltype="dna", offset=offset, storage_backend=suffix)
+    sv = coll.storage.get_view(name)
+    # this is the slice offset
+    assert sv.offset == 0
+    s = coll.seqs[name]
+    _, start, stop, _ = s.parent_coordinates(seq_coords=True, apply_offset=True)
+    # this is the annotation and slice offset
+    assert start == offset[name]
+    assert stop == len(s) + offset[name]
