@@ -442,7 +442,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def get_hash(self, seqid: str) -> str | None:
         """returns xxhash 64-bit hash for seqid"""
         if seqid not in self:
-            # the contains method triggers loading of name_to_seqhash
+            # the contains method triggers loading of _name_to_hash
             return None
         return self._name_to_hash.get(seqid)
 
@@ -576,8 +576,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         all_offsets = dict.fromkeys(self.names, 0)
         if "offset" not in self._file:
             return all_offsets
-        data = typing.cast("numpy.ndarray", self._file["offset"])[:]
 
+        data = typing.cast("numpy.ndarray", self._file["offset"])[:]
         return all_offsets | {k.decode("utf8"): int(v) for k, v in data}
 
     @property
@@ -2131,7 +2131,7 @@ def remove_gaps(arr, gap_index, missing_index=-1):  # pragma: no cover
 def make_unaligned(
     path: str | pathlib.Path | None,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2157,7 +2157,7 @@ def _data_from_file(h5file: h5py.File, grp: str) -> dict[str, npt.NDArray]:
 def _(
     path: str,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2200,7 +2200,7 @@ def _(
 def _(
     path: pathlib.Path,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2228,7 +2228,7 @@ def _(
 def _(
     path: None,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2258,7 +2258,7 @@ def _(
 def make_aligned(
     path: str,
     *,
-    data=None,
+    data: dict[str, numpy.ndarray] | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
