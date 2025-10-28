@@ -442,7 +442,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     def get_hash(self, seqid: str) -> str | None:
         """returns xxhash 64-bit hash for seqid"""
         if seqid not in self:
-            # the contains method triggers loading of name_to_seqhash
+            # the contains method triggers loading of _name_to_hash
             return None
         return self._name_to_hash.get(seqid)
 
@@ -549,18 +549,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             self._hash_to_index = h2i
         return seqid in self._name_to_hash
 
-    @functools.singledispatchmethod
     def __getitem__(self, index: str | int) -> SeqDataView:
+        if isinstance(index, int):
+            return self[self.names[index]]
+
+        if isinstance(index, str):
+            return self.get_view(index)
+
         msg = f"__getitem__ not implemented for {type(index)}"
         raise TypeError(msg)
-
-    @__getitem__.register
-    def _(self, index: str) -> SeqDataView:
-        return self.get_view(index)
-
-    @__getitem__.register
-    def _(self, index: int) -> SeqDataView:
-        return self[self.names[index]]
 
     def __len__(self) -> int:
         return len(self.names)
@@ -576,11 +573,11 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def offset(self) -> dict[str, int]:
-        all_offsets = dict.fromkeys(self.names, 0)
+        all_offsets = typing.cast("dict[str, int]", collections.defaultdict(int))
         if "offset" not in self._file:
             return all_offsets
-        data = typing.cast("numpy.ndarray", self._file["offset"])[:]
 
+        data = typing.cast("numpy.ndarray", self._file["offset"])[:]
         return all_offsets | {k.decode("utf8"): int(v) for k, v in data}
 
     @property
@@ -816,7 +813,6 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             seqid=seqid,
             parent_len=self.get_seq_length(seqid=seqid),
             alphabet=self.alphabet,
-            offset=self.offset.get(seqid, 0),
         )
 
     def get_seq_length(self, seqid: str) -> int:
@@ -2134,7 +2130,7 @@ def remove_gaps(arr, gap_index, missing_index=-1):  # pragma: no cover
 def make_unaligned(
     path: str | pathlib.Path | None,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2160,7 +2156,7 @@ def _data_from_file(h5file: h5py.File, grp: str) -> dict[str, npt.NDArray]:
 def _(
     path: str,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2203,7 +2199,7 @@ def _(
 def _(
     path: pathlib.Path,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2231,7 +2227,7 @@ def _(
 def _(
     path: None,
     *,
-    data=None,
+    data: h5py.File | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,
@@ -2261,7 +2257,7 @@ def _(
 def make_aligned(
     path: str,
     *,
-    data=None,
+    data: dict[str, numpy.ndarray] | None = None,
     mode: str = "r",
     in_memory: bool = False,
     alphabet: c3_alphabet.AlphabetABC | None = None,

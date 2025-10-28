@@ -54,6 +54,13 @@ def small(raw_data, dna_alpha):
     )
 
 
+@pytest.fixture
+def smallc3(raw_data, dna_alpha):
+    return c3_make_funcs[cogent3_h5seqs.UNALIGNED_SUFFIX](
+        data=raw_data, moltype="dna"
+    ).storage
+
+
 @pytest.mark.parametrize(
     "suffix",
     [
@@ -87,7 +94,7 @@ def test_make_unaligned(raw_data, offset, dna_alpha):
     assert ua.get_seq_str(seqid="s2") == raw_data["s2"]
     assert ua.get_seq_bytes(seqid="s2") == raw_data["s2"].encode("utf-8")
     assert ua.get_seq_length(seqid="s1") == len(raw_data["s1"])
-    assert ua.offset == offset_expect
+    assert {k: ua.offset[k] for k in offset_expect} == offset_expect
     assert ua.reversed_seqs == frozenset()
 
 
@@ -149,20 +156,33 @@ def test_dna_to_text(fxt, request):
     assert mod.alphabet == text
 
 
-def test_unaligned_offset(small):
+def test_unaligned_offset(small, smallc3):
+    expect = smallc3.offset
+    assert {k: small.offset[k] for k in expect} == expect
+    c3copy = smallc3.copy(offset={"s1": 2})
     copy = small.copy(offset={"s1": 2})
-    assert copy.offset == {"s1": 2, "s2": 0}
-    s1 = copy.get_view(seqid="s1")
-    assert s1.offset == 2
-    s2 = copy.get_view(seqid="s2")
-    assert s2.offset == 0
+    expect = c3copy.offset
+    assert {k: copy.offset[k] for k in expect} == expect
+    expect = {"s1": 2, "s2": 0}
+    assert {k: copy.offset[k] for k in expect} == expect
 
 
-def test_unaligned_reversed_seqs(small):
+def test_unaligned_offset_view(small, smallc3):
+    expect = smallc3.offset
+    assert {k: small.offset[k] for k in expect} == expect
+    c3view = smallc3.copy(offset={"s1": 2}).get_view(seqid="s1")
+    h5view = small.copy(offset={"s1": 2}).get_view(seqid="s1")
+    assert h5view.offset == c3view.offset
+
+
+def test_unaligned_reversed_seqs(small, smallc3):
+    copyc3 = smallc3.copy(reversed_seqs={"s2"})
     copy = small.copy(reversed_seqs={"s2"})
+    assert copy.reversed_seqs == copyc3.reversed_seqs
     assert copy.reversed_seqs == {"s2"}
+    c3s2 = copyc3.get_view(seqid="s2")
     s2 = copy.get_view(seqid="s2")
-    assert s2.is_reversed
+    assert s2.is_reversed == c3s2.is_reversed
 
 
 def test_write(tmp_path, small):
@@ -1691,3 +1711,26 @@ def test_sparse_write_read(tmp_path, raw_5seq_pos):
     aln.write(outpath)
     ld = cogent3.load_aligned_seqs(outpath, moltype="dna")
     assert ld.to_dict() == raw_5seq_pos
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        cogent3_h5seqs.SPARSE_SUFFIX,
+        cogent3_h5seqs.ALIGNED_SUFFIX,
+    ],
+)
+@pytest.mark.parametrize("name", ["a", "b"])
+def test_made_seq_offset(suffix, name):
+    mk_cls = c3_make_funcs[suffix]
+    data = {"a": "AGGCCC", "b": "AGAAAA"}
+    offset = {"a": 1, "b": 2}
+    coll = mk_cls(data, moltype="dna", offset=offset, storage_backend=suffix)
+    sv = coll.storage.get_view(name)
+    # this is the slice offset
+    assert sv.offset == 0
+    s = coll.seqs[name]
+    _, start, stop, _ = s.parent_coordinates(seq_coords=True, apply_offset=True)
+    # this is the annotation and slice offset
+    assert start == offset[name]
+    assert stop == len(s) + offset[name]
