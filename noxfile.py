@@ -2,7 +2,7 @@ import os
 
 import nox
 
-_py_versions = range(10, 14)
+_py_versions = range(10, 15)
 # on python >= 3.12 this will improve speed of test coverage a lot
 os.environ["COVERAGE_CORE"] = "sysmon"
 
