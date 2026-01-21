@@ -1096,7 +1096,7 @@ def subset_seqcoll_default(suffix, rename):
     )
     names = ["S1", "S3"] if rename else ["s1", "s3"]
     if rename:
-        coll = coll.rename_seqs(lambda x: x.upper())
+        coll = coll.renamed_seqs(lambda x: x.upper())
         names = ["S1", "S3"]
     return coll.take_seqs(names)
 
@@ -1112,7 +1112,7 @@ def subset_seqcoll_h5(suffix, rename):
     )
     names = ["S1", "S3"] if rename else ["s1", "s3"]
     if rename:
-        coll = coll.rename_seqs(lambda x: x.upper())
+        coll = coll.renamed_seqs(lambda x: x.upper())
         names = ["S1", "S3"]
     return coll.take_seqs(names)
 
