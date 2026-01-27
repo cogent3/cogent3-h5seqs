@@ -22,11 +22,11 @@ pip install cogent3-h5seqs
 
 #### Unaligned sequences
 
-For sequences that may not be the same length, select `c3h5u`, or `h5seqs_unaligned`.
+For sequences that may not be the same length, select `c3h5u`, or `h5seqs_unaligned`. Nucleic acid sequences (cogent3 "dna" or "rna" moltypes) are 2-bit encoded, reducing storage (on disk or in memory) requirements by 75%.
 
 #### Aligned sequences, full storage
 
-For sequences that must be the same length, select `c3h5a`, or `h5seqs_aligned`. This is a dense storage format whete every sequence is stored separately.
+For sequences that must be the same length, select `c3h5a`, or `h5seqs_aligned`. This is a dense storage format where every sequence is stored separately.
 
 #### Aligned sequences, sparse storage
 
@@ -74,7 +74,7 @@ aln = cogent3.load_aligned_seqs(some_path,
 The same values can also be provided to the `make_unaligned_seqs()`, `make_aligned_seqs()` functions in `cogent3`.
 
 > **Note**
-> You can turn off compression with `compression=False`. This can speed up operations.
+> With the 2-bit encoding for DNA/RNA sequences, you can safely turn off compression with `compression=False`. This can speed up operations. You can also turn off the encoding by setting `packed=False`.
 
 ### Saving storage to disk
 
