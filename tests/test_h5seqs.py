@@ -1211,7 +1211,7 @@ def test_repr_bytes(raw_aligned_data, suffix):
 def test_set_name_to_hash_no_data():
     h5file = cogent3_h5seqs.open_h5_file("memory", mode="w")
     # this should not fail
-    cogent3_h5seqs._set_name_to_hash_to_index(h5file=h5file, name_to_hash=None)  # noqa: SLF001
+    cogent3_h5seqs.util._set_name_to_hash_to_index(h5file=h5file, name_to_hash=None)  # noqa: SLF001
 
 
 def test_set_name_to_hash_read_only(tmp_path):
@@ -1221,7 +1221,7 @@ def test_set_name_to_hash_read_only(tmp_path):
     # now read only
     h5file = cogent3_h5seqs.open_h5_file(h5path, mode="r")
     # this should not fail
-    cogent3_h5seqs._set_name_to_hash_to_index(
+    cogent3_h5seqs.util._set_name_to_hash_to_index(
         h5file=h5file, name_to_hash={"s1": "not really a hash"}
     )
 
@@ -1391,7 +1391,7 @@ def test_get_seq_length_with_wout_gaps_present(small_aligned_sparse):
 
 def test_selecting_dtype():
     with pytest.raises(ValueError):
-        cogent3_h5seqs._best_uint_dtype(2**64 + 10)  # noqa: SLF001
+        cogent3_h5seqs.util._best_uint_dtype(2**64 + 10)  # noqa: SLF001
 
 
 def test_make_seqs_invalid_chars():
@@ -1734,3 +1734,136 @@ def test_made_seq_offset(suffix, name):
     # this is the annotation and slice offset
     assert start == offset[name]
     assert stop == len(s) + offset[name]
+
+
+def test_packed_encoding_no_ambiguity(dna_alpha):
+    """Test 2-bit packed encoding for nucleic sequences without ambiguity codes"""
+    s1 = "ACGTACGT"
+    s2 = "TGGGCAGTA"
+    data = {"s1": s1, "s2": s2}
+    seqs = cogent3_h5seqs.make_unaligned(
+        None, data=data, in_memory=True, alphabet=dna_alpha
+    )
+
+    assert seqs.h5file.attrs.get("packed") == True  # noqa: E712
+    assert seqs.get_seq_str(seqid="s1") == s1
+    assert seqs.get_seq_str(seqid="s2") == s2
+
+
+def test_packed_encoding_with_ambiguity(dna_alpha):
+    """Test 2-bit packed encoding for nucleic sequences with ambiguity codes"""
+    s1 = "ACGNNGTYAGGTT"
+    s2 = "NNACGTNN"
+    data = {"s1": s1, "s2": s2}
+    seqs = cogent3_h5seqs.make_unaligned(
+        None, data=data, in_memory=True, alphabet=dna_alpha
+    )
+
+    assert seqs.h5file.attrs.get("packed") == True  # noqa: E712
+    assert "noncanonical" in seqs.h5file
+    assert seqs.get_seq_str(seqid="s1") == s1
+    assert seqs.get_seq_str(seqid="s2") == s2
+
+
+def test_packed_encoding_slicing(dna_alpha):
+    """Test slicing works correctly with packed encoding"""
+    data = {"s1": "ACGTACGTACGT", "s2": "ACGNNGTYAGGTT"}
+    seqs = cogent3_h5seqs.make_unaligned(
+        None, data=data, in_memory=True, alphabet=dna_alpha
+    )
+
+    # Test slicing without ambiguity
+    assert seqs.get_seq_str(seqid="s1", start=2, stop=8) == "GTACGT"
+    assert seqs.get_seq_str(seqid="s1", start=0, stop=12, step=2) == "AGAGAG"
+
+    # Test slicing with ambiguity
+    assert seqs.get_seq_str(seqid="s2", start=2, stop=8) == "GNNGTY"
+    assert seqs.get_seq_str(seqid="s2", start=0, stop=13, step=3) == "ANTGT"
+
+
+def test_packed_override_false(dna_alpha):
+    """Test packed=False override for nucleic sequences"""
+    data = {"s1": "ACGTACGT", "s2": "TGGGCAGTA"}
+    seqs = cogent3_h5seqs.make_unaligned(
+        None, data=data, in_memory=True, alphabet=dna_alpha, packed=False
+    )
+
+    assert seqs.h5file.attrs.get("packed") == False  # noqa: E712
+    assert "noncanonical" not in seqs.h5file
+    assert seqs.get_seq_str(seqid="s1") == "ACGTACGT"
+    assert seqs.get_seq_str(seqid="s2") == "TGGGCAGTA"
+
+
+def test_packed_disabled_for_non_nucleic():
+    """Test that packed encoding is disabled for non-nucleic moltypes"""
+    text_alpha = cogent3.get_moltype("text").most_degen_alphabet()
+    data = {"s1": "HELLO", "s2": "WORLD"}
+    seqs = cogent3_h5seqs.make_unaligned(
+        None, data=data, in_memory=True, alphabet=text_alpha
+    )
+
+    assert seqs.h5file.attrs.get("packed") == False  # noqa: E712
+    assert seqs.get_seq_str(seqid="s1") == "HELLO"
+    assert seqs.get_seq_str(seqid="s2") == "WORLD"
+
+
+def test_packed_file_roundtrip(dna_alpha, tmp_path):
+    """Test writing and reading packed file from disk"""
+    data = {"s1": "ACGTACGT", "s2": "ACGNNGTYAGGTT"}
+    path = tmp_path / "packed.c3h5u"
+
+    seqs = cogent3_h5seqs.make_unaligned(path, data=data, mode="w", alphabet=dna_alpha)
+    seqs.write(path)
+    seqs.close()
+
+    loaded = cogent3_h5seqs.load_seqs_data_unaligned(path)
+    assert loaded.h5file.attrs.get("packed") == True  # noqa: E712
+    assert loaded.get_seq_str(seqid="s1") == "ACGTACGT"
+    assert loaded.get_seq_str(seqid="s2") == "ACGNNGTYAGGTT"
+
+
+def test_packed_storage_efficiency(dna_alpha, tmp_path):
+    """Test that packed encoding uses ~25% of unpacked storage for canonical bases"""
+    rng = numpy.random.default_rng(42)
+    seq_length = 100_000
+    bases = numpy.array(list("ACGT"))
+    random_seq = "".join(rng.choice(bases, size=seq_length))
+    data = {"s1": random_seq}
+
+    path_packed = tmp_path / "packed.c3h5u"
+    path_unpacked = tmp_path / "unpacked.c3h5u"
+
+    # Disable compression to see true storage difference
+    seqs_packed = cogent3_h5seqs.make_unaligned(
+        path_packed,
+        data=data,
+        mode="w",
+        alphabet=dna_alpha,
+        packed=True,
+        compression=False,
+    )
+    seqs_packed.write(path_packed)
+    seqs_packed.close()
+
+    seqs_unpacked = cogent3_h5seqs.make_unaligned(
+        path_unpacked,
+        data=data,
+        mode="w",
+        alphabet=dna_alpha,
+        packed=False,
+        compression=False,
+    )
+    seqs_unpacked.write(path_unpacked)
+    seqs_unpacked.close()
+
+    packed_size = path_packed.stat().st_size
+    unpacked_size = path_unpacked.stat().st_size
+
+    # Packed should be roughly 25% of unpacked (2 bits vs 8 bits)
+    # Allow some overhead for HDF5 metadata
+    ratio = packed_size / unpacked_size
+    assert ratio < 0.35, f"Packed size ratio {ratio:.2%} exceeds expected ~25%"
+
+    # Verify data integrity
+    loaded = cogent3_h5seqs.load_seqs_data_unaligned(path_packed)
+    assert loaded.get_seq_str(seqid="s1") == random_seq

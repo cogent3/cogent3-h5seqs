@@ -2,8 +2,8 @@ import numba
 import numpy as np
 
 
-@numba.jit(nopython=True, inline="always")
-def count_bases_non_canonical_runs(seq) -> tuple[int, int]:
+@numba.jit(nopython=True, cache=True, inline="always")
+def count_bases_non_canonical_runs(seq) -> tuple[int, int]:  # pragma: no cover
     """Counts number of bases and runs of non-canonical characters
 
     Parameters
@@ -29,8 +29,8 @@ def count_bases_non_canonical_runs(seq) -> tuple[int, int]:
     return num_bases, count
 
 
-@numba.jit(nopython=True, inline="always")
-def pack_nucleic(seq):
+@numba.jit(nopython=True, cache=True, inline="always")
+def pack_nucleic(seq):  # pragma: no cover
     """decomposes nucleic acid sequence
 
     Parameters
@@ -91,8 +91,8 @@ def pack_nucleic(seq):
     return packed, ambig_posns, num_canon
 
 
-@numba.jit(nopython=True, inline="always")
-def decode_single_base(packed, packed_idx):
+@numba.jit(nopython=True, cache=True, inline="always")
+def decode_single_base(packed, packed_idx):  # pragma: no cover
     """Decode a single base from packed data at the given packed index.
 
     Parameters
@@ -111,8 +111,8 @@ def decode_single_base(packed, packed_idx):
     return (packed[byte_idx] >> bit_offset) & np.uint8(3)
 
 
-@numba.jit(nopython=True, inline="always")
-def natural_to_packed_info(ambig_posns, nat_pos):
+@numba.jit(nopython=True, cache=True, inline="always")
+def natural_to_packed_info(ambig_posns, nat_pos):  # pragma: no cover
     """Convert natural position to packed position info.
 
     Parameters
@@ -155,8 +155,118 @@ def natural_to_packed_info(ambig_posns, nat_pos):
     return nat_pos - prev_cumsum, False, 255
 
 
-@numba.jit(nopython=True, inline="always")
-def compose_seq_slice(packed, ambig_posns, start, stop):
+@numba.jit(nopython=True, cache=True, inline="always")
+def find_stripped_range(ambig_posns, start, stop, num_canon):  # pragma: no cover
+    """Find the first and last stripped (canonical) indices in [start, stop).
+
+    Parameters
+    ----------
+    ambig_posns
+        array with columns [packed_pos, cumsum, char_code] for each ambiguous run
+    start
+        start index in natural sequence coordinates
+    stop
+        stop index (exclusive) in natural sequence coordinates
+    num_canon
+        number of canonical bases
+
+    Returns
+    -------
+    tuple of (first_stripped, last_stripped), or (None, None) if no canonical
+    bases exist in the range
+    """
+    if start >= stop or num_canon == 0:
+        return None, None
+
+    # No ambiguity - natural = stripped
+    if ambig_posns.size == 0:
+        first = start if start < num_canon else None
+        last = min(stop - 1, num_canon - 1) if start < num_canon else None
+        return first, last
+
+    nat_ends = ambig_posns[:, 0] + ambig_posns[:, 1]
+
+    # Find first stripped index
+    idx_start = np.searchsorted(nat_ends, start, side="right")
+
+    if idx_start == len(ambig_posns):
+        # start is after all runs
+        first_stripped = start - int(ambig_posns[-1, 1])
+        if first_stripped >= num_canon:
+            return None, None
+    else:
+        prev_cumsum_start = int(ambig_posns[idx_start - 1, 1]) if idx_start > 0 else 0
+        nat_start_run = int(ambig_posns[idx_start, 0]) + prev_cumsum_start
+
+        if start >= nat_start_run:
+            # In ambiguity run - first canonical is at end of run
+            if nat_ends[idx_start] >= stop:
+                return None, None  # No canonical in range
+            first_stripped = int(ambig_posns[idx_start, 0])
+        else:
+            # Canonical before run
+            first_stripped = start - prev_cumsum_start
+
+    # Find last stripped index
+    pos = stop - 1
+    idx_stop = np.searchsorted(nat_ends, pos, side="right")
+
+    if idx_stop == len(ambig_posns):
+        # pos is after all runs
+        last_stripped = pos - int(ambig_posns[-1, 1])
+    else:
+        prev_cumsum_stop = int(ambig_posns[idx_stop - 1, 1]) if idx_stop > 0 else 0
+        nat_start_run = int(ambig_posns[idx_stop, 0]) + prev_cumsum_stop
+
+        if pos >= nat_start_run:
+            # In ambiguity run - last canonical is before this run
+            if nat_start_run <= start:
+                return None, None  # No canonical before this run within range
+            last_stripped = int(ambig_posns[idx_stop, 0]) - 1
+        else:
+            # Canonical before run
+            last_stripped = pos - prev_cumsum_stop
+
+    return first_stripped, last_stripped
+
+
+@numba.jit(nopython=True, cache=True, inline="always")
+def get_packed_byte_range(ambig_posns, start, stop, num_canon):  # pragma: no cover
+    """Get the minimal byte range from packed array needed for a slice.
+
+    Parameters
+    ----------
+    ambig_posns
+        array with columns [packed_pos, cumsum, char_code] for each ambiguous run
+    start
+        start index in natural sequence coordinates
+    stop
+        stop index (exclusive) in natural sequence coordinates
+    num_canon
+        number of canonical bases
+
+    Returns
+    -------
+    tuple of (start_byte, end_byte, packed_start) for slicing packed array
+    """
+    min_stripped, max_stripped = find_stripped_range(
+        ambig_posns, start, stop, num_canon
+    )
+
+    if min_stripped is None or max_stripped is None:
+        return 0, 0, 0  # No canonical bases in range
+
+    start_byte = min_stripped // 4
+    end_byte = max_stripped // 4 + 1
+    packed_start = start_byte * 4
+
+    return start_byte, end_byte, packed_start
+
+
+@numba.jit(nopython=True, cache=True, inline="always")
+def compose_seq_slice(
+    packed, ambig_posns, start, stop, packed_start=0
+):  # pragma: no cover
     """Compose a slice [start:stop) directly from packed data.
 
     Parameters
@@ -170,6 +280,8 @@ def compose_seq_slice(packed, ambig_posns, start, stop):
         start index in natural sequence coordinates
     stop
         stop index (exclusive) in natural sequence coordinates
+    packed_start
+        offset to adjust packed indices (used when packed is a slice)
 
     Returns
     -------
@@ -184,12 +296,16 @@ def compose_seq_slice(packed, ambig_posns, start, stop):
     for i in range(length):
         nat_pos = start + i
         packed_idx, is_ambig, char_code = natural_to_packed_info(ambig_posns, nat_pos)
-        result[i] = char_code if is_ambig else decode_single_base(packed, packed_idx)
+        if is_ambig:
+            result[i] = char_code
+        else:
+            # Adjust packed_idx by the offset
+            result[i] = decode_single_base(packed, packed_idx - packed_start)
 
     return result
 
 
-@numba.jit(nopython=True, inline="always")
+# we do not numba.jit this function as packed will be a h5py dataset
 def unpack_nucleic(
     packed,
     ambig_posns,
@@ -227,4 +343,12 @@ def unpack_nucleic(
     if stop is None:
         stop = total_len
 
-    return compose_seq_slice(packed, ambig_posns, start, stop)
+    # Get minimal byte range needed
+    start_byte, end_byte, packed_start = get_packed_byte_range(
+        ambig_posns, start, stop, num_canon
+    )
+
+    # Extract minimal packed segment
+    packed_slice = packed[start_byte:end_byte]
+
+    return compose_seq_slice(packed_slice, ambig_posns, start, stop, packed_start)
