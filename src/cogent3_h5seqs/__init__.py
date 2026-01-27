@@ -8,7 +8,7 @@ from cogent3.core import alignment as c3_alignment
 from cogent3.format.sequence import SequenceWriterBase
 from cogent3.parse.sequence import SequenceParserBase
 
-__version__ = "0.7.3"
+__version__ = "0.8.0"
 
 # Re-exports
 # Re-export from aligned
