@@ -29,7 +29,7 @@ def count_bases_non_canonical_runs(seq) -> tuple[int, int]:
     return num_bases, count
 
 
-# @numba.jit(nopython=True)
+@numba.jit(nopython=True, inline="always")
 def pack_nucleic(seq):
     """decomposes nucleic acid sequence
 
@@ -91,107 +91,105 @@ def pack_nucleic(seq):
     return packed, ambig_posns, num_canon
 
 
-@numba.jit(nopython=True)
-def stripped_to_natural_pos(ambig_positions, pos):
-    """Map a packed (canonical character) sequence `pos` back to the original sequence.
-
-    `ambig_positions` has columns [packed_pos, cumulative_count, char_code].
-    We need to count how many ambiguous characters have packed_pos <= pos,
-    then add that count to `pos`.
-    """
-    if ambig_positions.size == 0 or pos < ambig_positions[0, 0]:
-        return pos
-
-    if pos >= ambig_positions[-1, 0]:
-        return pos + int(ambig_positions[-1, 1])
-
-    # Extract the sorted packed positions and find the rightmost one <= pos
-    n = len(ambig_positions)
-    starts = np.empty(n, dtype=np.int64)
-    for i in range(n):
-        starts[i] = int(ambig_positions[i, 0])
-
-    # Use searchsorted with side='right' to find insertion point
-    # (equivalent to bisect_right)
-    i = np.searchsorted(starts, pos, side="right") - 1
-
-    return pos + int(ambig_positions[i, 1])
-
-
-def unpack_packed(packed, length):
-    """Decode 2-bit packed canonical bases into their original indices.
+@numba.jit(nopython=True, inline="always")
+def decode_single_base(packed, packed_idx):
+    """Decode a single base from packed data at the given packed index.
 
     Parameters
     ----------
     packed
-        numpy uint8 array, each byte contains four 2-bit encoded bases
-    length
-        number of canonical bases to recover (may be < len(packed) * 4)
-    """
-
-    if length == 0:
-        return np.zeros(0, dtype=np.uint8)
-
-    result = np.zeros(length, dtype=np.uint8)
-    for idx in range(length):
-        byte_idx = idx // 4
-        bit_offset = (idx % 4) * 2
-        result[idx] = (packed[byte_idx] >> bit_offset) & np.uint8(3)
-
-    return result
-
-
-def unpack_packed_slice(packed, start, stop):
-    """Decode 2-bit packed canonical bases for a slice [start:stop].
-
-    Parameters
-    ----------
-    packed
-        numpy uint8 array, each byte contains four 2-bit encoded bases
-    start
-        start index in the unpacked sequence
-    stop
-        stop index (exclusive) in the unpacked sequence
+        numpy uint8 array of packed bases
+    packed_idx
+        index in the canonical (packed) sequence
 
     Returns
     -------
-    numpy uint8 array of decoded bases for the slice
+    The decoded base value (0-3)
+    """
+    byte_idx = packed_idx // 4
+    bit_offset = (packed_idx % 4) * 2
+    return (packed[byte_idx] >> bit_offset) & np.uint8(3)
+
+
+@numba.jit(nopython=True, inline="always")
+def natural_to_packed_info(ambig_posns, nat_pos):
+    """Convert natural position to packed position info.
+
+    Parameters
+    ----------
+    ambig_posns
+        array with columns [packed_pos, cumsum, char_code] for each
+        ambiguous run
+    nat_pos
+        position in natural (original) sequence coordinates
+
+    Returns
+    -------
+    tuple of (packed_pos, is_ambiguous, char_code)
+    - If canonical: (packed_index, False, 255)
+    - If ambiguous: (255, True, char_code)
+    """
+    prev_cumsum = 0
+
+    for i in range(len(ambig_posns)):
+        packed_pos = ambig_posns[i, 0]
+        cumsum = ambig_posns[i, 1]
+        char_code = ambig_posns[i, 2]
+
+        # Natural position where this ambiguity run starts
+        nat_start = packed_pos + prev_cumsum
+        # Length of this ambiguity run
+        run_length = cumsum - prev_cumsum
+
+        if nat_pos < nat_start:
+            # Position is before this ambiguity run, so it's canonical
+            return nat_pos - prev_cumsum, False, 255
+
+        if nat_pos < nat_start + run_length:
+            # Position falls within this ambiguity run
+            return 255, True, char_code
+
+        prev_cumsum = cumsum
+
+    # After all ambiguity runs, position is canonical
+    return nat_pos - prev_cumsum, False, 255
+
+
+@numba.jit(nopython=True, inline="always")
+def compose_seq_slice(packed, ambig_posns, start, stop):
+    """Compose a slice [start:stop) directly from packed data.
+
+    Parameters
+    ----------
+    packed
+        numpy uint8 array of 2-bit packed canonical bases
+    ambig_posns
+        array with columns [packed_pos, cumsum, char_code] for each
+        ambiguous run
+    start
+        start index in natural sequence coordinates
+    stop
+        stop index (exclusive) in natural sequence coordinates
+
+    Returns
+    -------
+    numpy uint8 array of the slice
     """
     length = stop - start
     if length <= 0:
         return np.zeros(0, dtype=np.uint8)
 
     result = np.zeros(length, dtype=np.uint8)
+
     for i in range(length):
-        idx = start + i
-        byte_idx = idx // 4
-        bit_offset = (idx % 4) * 2
-        result[i] = (packed[byte_idx] >> bit_offset) & np.uint8(3)
+        nat_pos = start + i
+        packed_idx, is_ambig, char_code = natural_to_packed_info(ambig_posns, nat_pos)
+        result[i] = char_code if is_ambig else decode_single_base(packed, packed_idx)
 
     return result
 
 
-# @numba.jit(nopython=True)
-def compose_seq(stripped, ambig_posns, total_len):
-    """composes a sequence from its canonical and ambiguous bases."""
-    result = np.zeros(total_len, dtype=np.uint8)
-
-    # inject the canonical bases
-    for stripped_pos in range(stripped.size):
-        nat_pos = stripped_to_natural_pos(ambig_posns, stripped_pos)
-        result[nat_pos] = stripped[stripped_pos]
-
-    # inject ambiguity codes
-    last = 0
-    for stripped_pos, cumsum, char_code in ambig_posns:
-        run_length = cumsum - last
-        for j in range(stripped_pos + last, stripped_pos + last + run_length):
-            result[j] = char_code
-        last = cumsum
-
-    return result
-
-
+@numba.jit(nopython=True, inline="always")
 def unpack_nucleic(
     packed,
     ambig_posns,
@@ -229,11 +227,4 @@ def unpack_nucleic(
     if stop is None:
         stop = total_len
 
-    # For no ambiguity case, natural coords == packed coords
-    if ambig_posns.size == 0:
-        return unpack_packed_slice(packed, start, stop)
-
-    # For sequences with ambiguities, fall back to full unpack + slice
-    stripped = unpack_packed(packed, num_canon)
-    full_seq = compose_seq(stripped, ambig_posns, total_len)
-    return full_seq[start:stop]
+    return compose_seq_slice(packed, ambig_posns, start, stop)

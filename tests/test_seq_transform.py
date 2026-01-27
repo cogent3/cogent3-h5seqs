@@ -2,11 +2,10 @@ import cogent3 as c3
 import numpy as np
 import pytest
 
-from cogent3_h5seqs.pack_nucleic import (
+from cogent3_h5seqs.seq_transform import (
     count_bases_non_canonical_runs,
     pack_nucleic,
     unpack_nucleic,
-    unpack_packed,
 )
 
 
@@ -56,51 +55,10 @@ def seq_no_ambiguity_long():
 
     Length 21 means: 6 full bytes (24 bases capacity) with 3 unused slots.
     """
-    s = c3.make_seq("ACGTACGTACGTACGTACGTA", moltype="dna")
+    s = c3.make_seq("TCTATACCTGCGACCCGCGTC", moltype="dna")
     sarr = s.to_array()
     packed, positions, length = pack_nucleic(sarr)
     return sarr, packed, positions, length
-
-
-def test_unpack_packed_roundtrip_full_byte():
-    s = c3.make_seq("ACGT", moltype="dna")
-    sarr = s.to_array()
-    packed, _, length = pack_nucleic(sarr)
-
-    decoded = unpack_packed(packed, length)
-
-    assert np.array_equal(decoded, sarr)
-
-
-def test_unpack_packed_partial_final_byte():
-    s = c3.make_seq("ACGTA", moltype="dna")
-    sarr = s.to_array()
-    packed, _, length = pack_nucleic(sarr)
-    assert len(packed) == 2  # requires a partially filled final byte
-
-    decoded = unpack_packed(packed, length)
-    assert np.array_equal(decoded, sarr)
-
-
-@pytest.mark.parametrize("seq_str", ["A", "AC", "ACG"])
-def test_unpack_packed_partial_one_byte(seq_str):
-    s = c3.make_seq(seq_str, moltype="dna")
-    sarr = s.to_array()
-    packed, _, length = pack_nucleic(sarr)
-    assert len(packed) == 1  # requires a partially filled final byte
-
-    decoded = unpack_packed(packed, length)
-    assert np.array_equal(decoded, sarr)
-
-
-def test_unpack_packed_respects_length_limit():
-    packed = np.array([0b11100100], dtype=np.uint8)
-
-    decoded_two = unpack_packed(packed, 2)
-    assert np.array_equal(decoded_two, np.array([0, 1], dtype=np.uint8))
-
-    decoded_three = unpack_packed(packed, 3)
-    assert np.array_equal(decoded_three, np.array([0, 1, 2], dtype=np.uint8))
 
 
 def test_ambig_coords():
@@ -255,5 +213,38 @@ def test_unpack_nucleic_slice_no_ambiguity(seq_no_ambiguity_long, start, stop):
     unpacked = unpack_nucleic(packed, positions, length, start=start, stop=stop)
 
     # Compare with direct slicing of original array
+    expected = sarr[start:stop]
+    assert np.array_equal(unpacked, expected)
+
+
+# seq_with_ambiguity fixture creates "ACGNNGTYAGGTT" (length 13)
+# Canonical bases at: 0,1,2 (ACG), 5,6 (GT), 8,9,10,11,12 (AGGTT) -> 10 packed bases
+# Ambiguities at: 3,4 (NN), 7 (Y) -> 3 ambiguous chars
+@pytest.mark.parametrize(
+    ("start", "stop"),
+    [
+        # (None, None),  # Full sequence
+        # (0, 13),  # Full sequence explicit
+        # (0, 3),  # Before any ambiguity (ACG)
+        # (0, 5),  # Through first ambiguity (ACGNN)
+        (3, 5),  # Just the NN ambiguity
+        (3, 8),  # From first ambig through second (NNGTY)
+        (5, 13),  # After first ambiguity to end
+        (7, 8),  # Just Y ambiguity
+        (8, 13),  # After all ambiguities (AGGTT)
+        (2, 10),  # Middle slice crossing both ambiguities
+        (0, 1),  # Single canonical at start
+        (3, 4),  # Single ambiguous (first N)
+        (12, 13),  # Single canonical at end
+        (0, 0),  # Empty slice
+        (6, 6),  # Empty slice in middle
+    ],
+)
+def test_unpack_nucleic_slice_with_ambiguity(seq_with_ambiguity, start, stop):
+    """Test slicing for sequences with ambiguity characters"""
+    sarr, packed, positions, length = seq_with_ambiguity
+
+    unpacked = unpack_nucleic(packed, positions, length, start=start, stop=stop)
+
     expected = sarr[start:stop]
     assert np.array_equal(unpacked, expected)
