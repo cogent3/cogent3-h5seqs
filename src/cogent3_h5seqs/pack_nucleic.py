@@ -141,6 +141,36 @@ def unpack_packed(packed, length):
     return result
 
 
+def unpack_packed_slice(packed, start, stop):
+    """Decode 2-bit packed canonical bases for a slice [start:stop].
+
+    Parameters
+    ----------
+    packed
+        numpy uint8 array, each byte contains four 2-bit encoded bases
+    start
+        start index in the unpacked sequence
+    stop
+        stop index (exclusive) in the unpacked sequence
+
+    Returns
+    -------
+    numpy uint8 array of decoded bases for the slice
+    """
+    length = stop - start
+    if length <= 0:
+        return np.zeros(0, dtype=np.uint8)
+
+    result = np.zeros(length, dtype=np.uint8)
+    for i in range(length):
+        idx = start + i
+        byte_idx = idx // 4
+        bit_offset = (idx % 4) * 2
+        result[i] = (packed[byte_idx] >> bit_offset) & np.uint8(3)
+
+    return result
+
+
 # @numba.jit(nopython=True)
 def compose_seq(stripped, ambig_posns, total_len):
     """composes a sequence from its canonical and ambiguous bases."""
@@ -166,8 +196,10 @@ def unpack_nucleic(
     packed,
     ambig_posns,
     num_canon,
+    start=None,
+    stop=None,
 ):
-    """Reverses 2-bit encoding to reconstruct the original sequence.
+    """Reverses 2-bit encoding to reconstruct the original sequence or a slice.
 
     Parameters
     ----------
@@ -179,12 +211,29 @@ def unpack_nucleic(
     num_canon
         number of canonical bases (the sequence length after stripping
         ambiguities)
+    start
+        start index in natural (original) sequence coordinates, defaults to 0
+    stop
+        stop index (exclusive) in natural sequence coordinates, defaults to
+        sequence length
 
     Returns
     -------
-    fully reconstructed original sequence with actual ambiguity codes
+    fully reconstructed original sequence (or slice) with actual ambiguity codes
     """
     total_ambig = int(ambig_posns[-1, 1]) if ambig_posns.size > 0 else 0
     total_len = num_canon + total_ambig
+
+    if start is None:
+        start = 0
+    if stop is None:
+        stop = total_len
+
+    # For no ambiguity case, natural coords == packed coords
+    if ambig_posns.size == 0:
+        return unpack_packed_slice(packed, start, stop)
+
+    # For sequences with ambiguities, fall back to full unpack + slice
     stripped = unpack_packed(packed, num_canon)
-    return compose_seq(stripped, ambig_posns, total_len)
+    full_seq = compose_seq(stripped, ambig_posns, total_len)
+    return full_seq[start:stop]

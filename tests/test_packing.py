@@ -50,6 +50,18 @@ def seq_no_ambiguity():
     return sarr, packed, positions, length
 
 
+@pytest.fixture
+def seq_no_ambiguity_long():
+    """21-base canonical sequence for slice testing.
+
+    Length 21 means: 6 full bytes (24 bases capacity) with 3 unused slots.
+    """
+    s = c3.make_seq("ACGTACGTACGTACGTACGTA", moltype="dna")
+    sarr = s.to_array()
+    packed, positions, length = pack_nucleic(sarr)
+    return sarr, packed, positions, length
+
+
 def test_unpack_packed_roundtrip_full_byte():
     s = c3.make_seq("ACGT", moltype="dna")
     sarr = s.to_array()
@@ -208,3 +220,40 @@ def test_pack_unpack_roundtrip(seq_str):
 
     # Should exactly reconstruct the original
     assert (unpacked == sarr).all(), f"Failed for sequence: {seq_str}"
+
+
+# seq_no_ambiguity_long fixture creates "ACGTACGTACGTACGTACGTA" (length 21)
+@pytest.mark.parametrize(
+    ("start", "stop"),
+    [
+        (None, None),  # Full sequence (default)
+        (0, 21),  # Full sequence with explicit bounds
+        (0, 10),  # First half
+        (10, 21),  # Second half
+        (5, 15),  # Middle slice
+        (0, 1),  # First element
+        (20, 21),  # Last element
+        (10, 11),  # Single element in middle
+        (0, 0),  # Empty slice at start
+        (10, 10),  # Empty slice in middle
+        (21, 21),  # Empty slice at end
+        (1, 20),  # Most of sequence except ends
+        (0, 5),  # First byte + one base
+        (3, 7),  # Starts mid-byte, ends mid-byte
+        (0, 4),  # Exactly one byte
+        (4, 8),  # Exactly second byte
+        (0, 8),  # Exactly two bytes
+        (2, 10),  # Starts mid-byte, spans multiple bytes
+        (6, 18),  # Spans multiple full bytes in middle
+        (17, 21),  # Last partial byte
+    ],
+)
+def test_unpack_nucleic_slice_no_ambiguity(seq_no_ambiguity_long, start, stop):
+    """Test slicing for sequences without ambiguity characters"""
+    sarr, packed, positions, length = seq_no_ambiguity_long
+
+    unpacked = unpack_nucleic(packed, positions, length, start=start, stop=stop)
+
+    # Compare with direct slicing of original array
+    expected = sarr[start:stop]
+    assert np.array_equal(unpacked, expected)
