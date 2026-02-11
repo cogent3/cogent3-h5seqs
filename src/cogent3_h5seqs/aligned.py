@@ -37,6 +37,27 @@ from .util import (
 
 
 class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
+    """Dense HDF5 storage for aligned sequences.
+
+    Stores gapped and ungapped representations of equal-length sequences.
+    Gapped sequences are deduplicated by their xxhash64 digest.
+
+    Parameters
+    ----------
+    gapped_seqs
+        An open HDF5 file used as the backing store.
+    alphabet
+        cogent3 alphabet instance for the sequence moltype.
+    offset
+        Mapping of sequence names to integer annotation offsets.
+    check
+        If True, validate the HDF5 file structure.
+    reversed_seqs
+        Set of sequence names that are reverse-complemented.
+    compression
+        If True, compress datasets with lzf.
+    """
+
     _gapped_grp: str = "gapped"
     _ungapped_grp: str = "ungapped"
     _gaps_grp: str = "gaps"
@@ -1254,6 +1275,41 @@ def make_aligned(
     ref_name: str = "",
     sparse: bool = False,
 ) -> AlignedSeqsData | SparseSeqsData:
+    """Create or load an AlignedSeqsData or SparseSeqsData instance.
+
+    Parameters
+    ----------
+    path
+        Filesystem path to an HDF5 file.
+    data
+        Optional mapping of sequence names to numpy arrays to add on
+        creation.
+    mode
+        HDF5 file open mode (e.g. ``"r"``, ``"w"``).
+    in_memory
+        If True, use the HDF5 core driver for in-memory storage.
+    alphabet
+        cogent3 alphabet instance. Required when opening in write mode.
+    offset
+        Mapping of sequence names to integer annotation offsets.
+    reversed_seqs
+        Set of sequence names that are reverse-complemented.
+    check
+        If True, validate the HDF5 file structure on load.
+    suffix
+        Filename suffix for the storage type.
+    compression
+        If True, compress datasets with lzf.
+    ref_name
+        Name of the reference sequence for sparse storage.
+    sparse
+        If True, create a SparseSeqsData instance instead of
+        AlignedSeqsData.
+
+    Returns
+    -------
+    AlignedSeqsData or SparseSeqsData
+    """
     h5file = open_h5_file(path=path, mode=mode, in_memory=in_memory)
     if (mode != "r" or in_memory) and alphabet is None:
         msg = "alphabet must be provided for write mode"
@@ -1301,7 +1357,28 @@ def load_seqs_data_aligned(
     check: bool = True,
     suffix: str = ALIGNED_SUFFIX,
 ) -> AlignedSeqsData:
-    """load hdf5 aligned sequence data from file"""
+    """Load dense aligned sequence data from an HDF5 file.
+
+    Parameters
+    ----------
+    path
+        Path to an ``.c3h5a`` file.
+    mode
+        HDF5 file open mode.
+    check
+        If True, validate the HDF5 file structure on load.
+    suffix
+        Expected filename suffix.
+
+    Returns
+    -------
+    AlignedSeqsData
+
+    Raises
+    ------
+    ValueError
+        If the file suffix does not match ``suffix``.
+    """
     path = pathlib.Path(path)
     if path.suffix != f".{suffix}":
         msg = f"File {path} does not have an expected suffix {suffix!r}"
@@ -1319,7 +1396,28 @@ def load_seqs_data_sparse(
     check: bool = True,
     suffix: str = SPARSE_SUFFIX,
 ) -> SparseSeqsData:
-    """load hdf5 aligned sequence data from file"""
+    """Load sparse aligned sequence data from an HDF5 file.
+
+    Parameters
+    ----------
+    path
+        Path to a ``.c3h5s`` file.
+    mode
+        HDF5 file open mode.
+    check
+        If True, validate the HDF5 file structure on load.
+    suffix
+        Expected filename suffix.
+
+    Returns
+    -------
+    SparseSeqsData
+
+    Raises
+    ------
+    ValueError
+        If the file suffix does not match ``suffix``.
+    """
     path = pathlib.Path(path)
     if path.suffix != f".{suffix}":
         msg = f"File {path} does not have an expected suffix {suffix!r}"

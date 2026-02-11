@@ -38,6 +38,30 @@ from .util import (
 
 
 class UnalignedSeqsData(c3_alignment.SeqsDataABC):
+    """HDF5 storage for unaligned (variable-length) sequences.
+
+    Sequences are deduplicated by xxhash64 digest and optionally 2-bit
+    encoded for DNA/RNA moltypes.
+
+    Parameters
+    ----------
+    data
+        An open HDF5 file used as the backing store.
+    alphabet
+        cogent3 alphabet instance for the sequence moltype.
+    offset
+        Mapping of sequence names to integer annotation offsets.
+    check
+        If True, validate the HDF5 file structure.
+    reversed_seqs
+        Set of sequence names that are reverse-complemented.
+    compression
+        If True, compress datasets with lzf.
+    packed
+        If True, apply 2-bit encoding for nucleic acid sequences. Default
+        is None (auto-detect from alphabet).
+    """
+
     _ungapped_grp: str = "ungapped"
     _noncanonical_grp: str = "noncanonical"
     _suffix: str = UNALIGNED_SUFFIX
@@ -730,6 +754,42 @@ def make_unaligned(
     compression: bool = True,
     packed: bool | None = None,
 ) -> UnalignedSeqsData:
+    """Create or load an UnalignedSeqsData instance.
+
+    Dispatches on the type of ``path``: a string or Path opens (or creates)
+    an on-disk HDF5 file, while None creates a writeable in-memory store.
+
+    Parameters
+    ----------
+    path
+        Filesystem path to an HDF5 file, or None for in-memory storage.
+    data
+        Optional mapping of sequence names to numpy arrays to add on
+        creation.
+    mode
+        HDF5 file open mode (e.g. ``"r"``, ``"w"``).
+    in_memory
+        If True, use the HDF5 core driver for in-memory storage.
+    alphabet
+        cogent3 alphabet instance. Required when opening in write mode.
+    offset
+        Mapping of sequence names to integer annotation offsets.
+    reversed_seqs
+        Set of sequence names that are reverse-complemented.
+    check
+        If True, validate the HDF5 file structure on load.
+    suffix
+        Filename suffix for the storage type.
+    compression
+        If True, compress datasets with lzf.
+    packed
+        If True, apply 2-bit encoding for nucleic acid sequences. Default
+        is None (auto-detect from alphabet).
+
+    Returns
+    -------
+    UnalignedSeqsData
+    """
     msg = f"make_unaligned not implemented for {type(path)}"
     raise TypeError(msg)
 
@@ -848,7 +908,28 @@ def load_seqs_data_unaligned(
     check: bool = True,
     suffix: str = UNALIGNED_SUFFIX,
 ) -> UnalignedSeqsData:
-    """load hdf5 unaligned sequence data from file"""
+    """Load unaligned sequence data from an HDF5 file.
+
+    Parameters
+    ----------
+    path
+        Path to a ``.c3h5u`` file.
+    mode
+        HDF5 file open mode.
+    check
+        If True, validate the HDF5 file structure on load.
+    suffix
+        Expected filename suffix.
+
+    Returns
+    -------
+    UnalignedSeqsData
+
+    Raises
+    ------
+    ValueError
+        If the file suffix does not match ``suffix``.
+    """
     path = pathlib.Path(path)
     if path.suffix != f".{suffix}":
         msg = f"File {path} does not have an expected suffix {suffix!r}"
