@@ -1,5 +1,7 @@
 """cogent3-h5seqs: HDF5 storage backend for cogent3 sequences."""
 
+from __future__ import annotations
+
 import pathlib
 import typing
 
@@ -134,7 +136,7 @@ class H5SeqsUnalignedParser(SequenceParserBase):
         return True
 
     @property
-    def loader(
+    def loader(  # type: ignore[override]
         self,
     ) -> typing.Callable[[pathlib.Path], UnalignedSeqsData | AlignedSeqsData]:
         return load_seqs_data_unaligned
@@ -164,7 +166,7 @@ class H5SeqsAlignedParser(SequenceParserBase):
         return True
 
     @property
-    def loader(
+    def loader(  # type: ignore[override]
         self,
     ) -> typing.Callable[[pathlib.Path], AlignedSeqsData]:
         return load_seqs_data_aligned
@@ -180,7 +182,7 @@ class H5SeqsSparseParser(H5SeqsAlignedParser):
         return {SPARSE_SUFFIX}
 
     @property
-    def loader(
+    def loader(  # type: ignore[override]
         self,
     ) -> typing.Callable[[pathlib.Path], SparseSeqsData]:
         return load_seqs_data_sparse
@@ -205,12 +207,12 @@ class H5UnalignedSeqsWriter(SequenceWriterBase):
     def supported_suffixes(self) -> set[str]:
         return {UNALIGNED_SUFFIX}
 
-    def write(
+    def write(  # type: ignore[override]
         self,
         *,
         path: pathlib.Path,
         seqcoll: SeqCollTypes,
-        **kwargs,
+        **kwargs: typing.Any,  # noqa: ANN401
     ) -> pathlib.Path:
         path = pathlib.Path(path)
         kwargs.pop("order", None)
@@ -260,12 +262,12 @@ class H5SparseSeqsWriter(H5UnalignedSeqsWriter):
     def supported_suffixes(self) -> set[str]:
         return {SPARSE_SUFFIX}
 
-    def write(
+    def write(  # type: ignore[override]
         self,
         *,
         path: pathlib.Path,
         seqcoll: SeqCollTypes,
-        **kwargs,
+        **kwargs: typing.Any,  # noqa: ANN401
     ) -> pathlib.Path:
         return super().write(
             path=path,

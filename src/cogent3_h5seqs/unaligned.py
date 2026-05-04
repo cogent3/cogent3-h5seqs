@@ -1,5 +1,7 @@
 """Unaligned sequence data storage."""
 
+from __future__ import annotations
+
 import collections
 import contextlib
 import functools
@@ -13,6 +15,9 @@ import typing_extensions
 from cogent3.core import alignment as c3_alignment
 from cogent3.core import alphabet as c3_alphabet
 from cogent3.core import moltype as c3_moltype
+
+if typing.TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Mapping
 
 from .seq_transform import pack_nucleic, unpack_nucleic
 from .util import (
@@ -146,7 +151,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             for attr in self._file.attrs
             if attr != "alphabet"
         )
-        if self.alphabet.moltype.name == "bytes":
+        if getattr(self.alphabet.moltype, "name", None) == "bytes":
             attr_vals.append("alphabet=bytes")
         else:
             attr_vals.append(f"alphabet='{''.join(self.alphabet)}'")
@@ -433,7 +438,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
         return datafile, alphabet, offset, reversed_seqs
 
-    def copy(
+    def copy(  # type: ignore[override]
         self,
         data: h5py.File | None = None,
         alphabet: c3_alphabet.CharAlphabet | None = None,
@@ -474,7 +479,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         self,
         alphabet: c3_alphabet.AlphabetABC,
         check_valid: bool = True,
-    ) -> "UnalignedSeqsData":
+    ) -> UnalignedSeqsData:
         alpha = typing.cast("c3_alphabet.CharAlphabet", alphabet)
         if self._compatible_alphabet(alpha):
             return self.copy(alphabet=alpha)
@@ -533,13 +538,13 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             )
             dataset.attrs["length"] = len(seqarray)
 
-    def add_seqs(
+    def add_seqs(  # type: ignore[override]
         self,
-        seqs: dict[str, StrORBytesORArray],
+        seqs: Mapping[str, StrORBytesORArray],
         force_unique_keys: bool = True,
         offset: dict[str, int] | None = None,
         reversed_seqs: frozenset[str] | None = None,
-    ) -> "UnalignedSeqsData":
+    ) -> UnalignedSeqsData:
         """Returns self with added sequences
 
         Parameters
@@ -674,7 +679,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         data,
         alphabet: c3_alphabet.AlphabetABC,
         **kwargs,
-    ) -> "UnalignedSeqsData":
+    ) -> UnalignedSeqsData:
         # make in memory
         path = kwargs.pop("storage_path", "memory")
         kwargs = {"mode": "w"} | kwargs
@@ -691,7 +696,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         seqcoll: c3_alignment.SequenceCollection,
         path: str | pathlib.Path | None = None,
         **kwargs,
-    ) -> "UnalignedSeqsData":
+    ) -> UnalignedSeqsData:
         """convert a cogent3 SeqsDataABC into UnalignedSeqsData"""
         if type(seqcoll) is not c3_alignment.SequenceCollection:
             msg = f"Expected seqcoll to be an instance of SequenceCollection, got {type(seqcoll).__name__!r}"
@@ -705,7 +710,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             check=False,
             **kwargs,
         )
-        seqs = {s.name: numpy.array(s) for s in seqcoll.seqs}
+        seqs: dict[str, StrORBytesORArray] = {
+            typing.cast("str", s.name): numpy.array(s) for s in seqcoll.seqs
+        }
         obj.add_seqs(
             seqs=seqs,
             offset=seqcoll.storage.offset,
@@ -716,7 +723,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     @classmethod
     def from_file(
         cls, path: str | pathlib.Path, mode: str = "r", check: bool = True
-    ) -> "UnalignedSeqsData":
+    ) -> UnalignedSeqsData:
         h5file = open_h5_file(path=path, mode=mode, in_memory=False)
         if not cls.new_type(h5file):
             data = _data_from_file(h5file, cls._ungapped_grp)
@@ -895,7 +902,7 @@ def _(
 
     useqs = UnalignedSeqsData(
         data=h5file,
-        alphabet=alphabet,
+        alphabet=typing.cast("c3_alphabet.CharAlphabet", alphabet),
         offset=offset,
         reversed_seqs=reversed_seqs,
         check=check,
