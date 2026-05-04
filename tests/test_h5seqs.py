@@ -1211,7 +1211,7 @@ def test_repr_bytes(raw_aligned_data, suffix):
 def test_set_name_to_hash_no_data():
     h5file = cogent3_h5seqs.open_h5_file("memory", mode="w")
     # this should not fail
-    cogent3_h5seqs.util._set_name_to_hash_to_index(h5file=h5file, name_to_hash=None)  # noqa: SLF001
+    cogent3_h5seqs.util._set_name_to_hash_to_index(h5file=h5file, name_to_hash=None)
 
 
 def test_set_name_to_hash_read_only(tmp_path):
@@ -1391,7 +1391,7 @@ def test_get_seq_length_with_wout_gaps_present(small_aligned_sparse):
 
 def test_selecting_dtype():
     with pytest.raises(ValueError):
-        cogent3_h5seqs.util._best_uint_dtype(2**64 + 10)  # noqa: SLF001
+        cogent3_h5seqs.util._best_uint_dtype(2**64 + 10)
 
 
 def test_make_seqs_invalid_chars():

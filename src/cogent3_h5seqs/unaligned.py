@@ -1,6 +1,7 @@
 """Unaligned sequence data storage."""
 
 import collections
+import contextlib
 import functools
 import pathlib
 import pickle
@@ -24,7 +25,6 @@ from .util import (
     _assign_attr_if_missing,
     _data_from_file,
     _get_name2hash_hash2idx,
-    _get_name_to_hash,
     _restore_alphabet,
     _set_name_to_hash_to_index,
     _set_offset,
@@ -82,13 +82,17 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         self._file: h5py.File = data
         self._primary_grp: str = self._ungapped_grp
 
-        reversed_seqs = reversed_seqs or frozenset()
-        _set_reversed_seqs(self._file, reversed_seqs, compression=self._compress)
+        reversed_seqs = frozenset(reversed_seqs or frozenset())
         offset = offset or {}
-        _set_offset(self._file, offset=offset, compression=self._compress)
         self._attr_set: bool = False
         self._name_to_hash: dict[str, str] = {}
         self._hash_to_index: dict[str, int] = {}
+        self._index_loaded: bool = False
+        self._offset_cache: dict[str, int] | None = dict(offset) if offset else None
+        self._reversed_cache: frozenset[str] | None = (
+            reversed_seqs if reversed_seqs else None
+        )
+        self._dirty: bool = bool(offset) or bool(reversed_seqs)
 
         # Determine whether to use 2-bit packed encoding
         # Packing only applies to UnalignedSeqsData
@@ -148,9 +152,10 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             attr_vals.append("alphabet=bytes")
         else:
             attr_vals.append(f"alphabet='{''.join(self.alphabet)}'")
-        n2h, _ = _get_name2hash_hash2idx(self._file)
+        if not self._index_loaded:
+            self._ensure_index()
         parts = ", ".join(attr_vals)
-        return f"{name}({parts}, num_seqs={len(n2h)})"
+        return f"{name}({parts}, num_seqs={len(self._name_to_hash)})"
 
     def _invalid_seqids(self, seqids: typing.Sequence[str]) -> set[str]:
         """returns seqids not present in self.names"""
@@ -187,6 +192,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         _assign_attr_if_missing(data, "packed", self._is_packed)
         self._attr_set = True
 
+    def _ensure_index(self) -> None:
+        """Lazily decode the on-disk name_to_hash into in-memory caches."""
+        if self._index_loaded:
+            return
+        n2h, h2i = _get_name2hash_hash2idx(self._file)
+        # dict insertion order matches the on-disk dataset order
+        self._name_to_hash = n2h
+        self._hash_to_index = h2i
+        self._index_loaded = True
+
     def _populate_optional_grps(
         self,
         offset: dict[str, int] | None,
@@ -194,21 +209,16 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         name_to_hash: dict[str, str],
         hash_to_index: dict[str, int],
     ) -> None:
-        # we always compress these as they tend be loaded in one go
-        if offset := offset or {}:
-            _set_offset(
-                self._file, offset=self.offset | offset, compression=DEFAULT_COMPRESSION
-            )
-
-        reversed_seqs = reversed_seqs or frozenset()
-        _set_reversed_seqs(self._file, reversed_seqs, compression=DEFAULT_COMPRESSION)
-        _set_name_to_hash_to_index(
-            self._file,
-            {k: (h, hash_to_index.get(h, -1)) for k, h in name_to_hash.items()},
-            compression=DEFAULT_COMPRESSION,
-        )
+        # in-memory state is the source of truth, flush() writes to disk
         self._name_to_hash |= name_to_hash
         self._hash_to_index |= hash_to_index
+        if offset:
+            merged = (self._offset_cache or {}) | offset
+            self._offset_cache = merged
+        if reversed_seqs:
+            existing = self._reversed_cache or frozenset()
+            self._reversed_cache = existing | frozenset(reversed_seqs)
+        self._dirty = True
 
     @property
     def filename_suffix(self) -> str:
@@ -270,8 +280,23 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return self._file.mode in _writeable_modes
 
     def __del__(self) -> None:
+        # __del__ may run during interpreter shutdown when h5py's internal
+        # locks have been torn down to None — accessing self._file.id then
+        # raises TypeError from h5py's context-manager guard. Suppress all
+        # exceptions: the OS will reclaim file descriptors on exit anyway.
+        with contextlib.suppress(Exception):
+            self._del_impl()
+
+    def _del_impl(self) -> None:
         if not (getattr(self, "_file", None) and self._file.id):
             return
+
+        # best-effort flush of any deferred writes, getattr-guarded so a
+        # partially-initialised instance (where __init__ raised before
+        # assigning _dirty) does not raise AttributeError from __del__
+        if getattr(self, "_dirty", False):
+            with contextlib.suppress(Exception):
+                self.flush()
 
         # we need to get the file name before closing file
         path = pathlib.Path(self._file.filename)
@@ -324,10 +349,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     def __contains__(self, seqid: str) -> bool:
         """seqid in self"""
-        if not self._name_to_hash:
-            n2h, h2i = _get_name2hash_hash2idx(self._file)  # populates if empty
-            self._name_to_hash = n2h
-            self._hash_to_index = h2i
+        if not self._index_loaded:
+            self._ensure_index()
         return seqid in self._name_to_hash
 
     def __getitem__(self, index: str | int) -> SeqDataView:
@@ -349,25 +372,32 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
 
     @property
     def names(self) -> tuple[str, ...]:
-        n2h = _get_name_to_hash(self._file)
-        return tuple(n2h["seqid"].astype(str).tolist()) if n2h is not None else ()
+        if not self._index_loaded:
+            self._ensure_index()
+        # dict insertion order matches the on-disk dataset row order, so this
+        # preserves the canonical sequence ordering without re-decoding bytes
+        return tuple(self._name_to_hash)
 
     @property
     def offset(self) -> dict[str, int]:
+        if self._offset_cache is None:
+            offsets: dict[str, int] = {}
+            if "offset" in self._file:
+                data = typing.cast("numpy.ndarray", self._file["offset"])[:]
+                offsets = {k.decode("utf8"): int(v) for k, v in data}
+            self._offset_cache = offsets
         all_offsets = typing.cast("dict[str, int]", collections.defaultdict(int))
-        if "offset" not in self._file:
-            return all_offsets
-
-        data = typing.cast("numpy.ndarray", self._file["offset"])[:]
-        return all_offsets | {k.decode("utf8"): int(v) for k, v in data}
+        return all_offsets | self._offset_cache
 
     @property
     def reversed_seqs(self) -> frozenset[str]:
-        if "reversed_seqs" not in self._file:
-            return frozenset()
-
-        data = typing.cast("numpy.ndarray", self._file["reversed_seqs"])[:]
-        return frozenset(v.decode("utf8") for v in data)
+        if self._reversed_cache is None:
+            if "reversed_seqs" in self._file:
+                data = typing.cast("numpy.ndarray", self._file["reversed_seqs"])[:]
+                self._reversed_cache = frozenset(v.decode("utf8") for v in data)
+            else:
+                self._reversed_cache = frozenset()
+        return self._reversed_cache
 
     def _make_new_h5_file(
         self,
@@ -380,6 +410,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
     ) -> tuple[
         h5py.File, c3_alphabet.CharAlphabet, dict[str, int] | None, frozenset[str]
     ]:
+        # commit any deferred writes before another reader observes the file
+        self.flush()
         datafile: h5py.File = (
             duplicate_h5_file(
                 h5file=self._file,
@@ -527,8 +559,9 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
             raise PermissionError(msg)
 
         self._populate_attrs()
-        n2h, _ = _get_name2hash_hash2idx(self._file)
-        name_to_hash = self._name_to_hash | n2h
+        if not self._index_loaded:
+            self._ensure_index()
+        name_to_hash = dict(self._name_to_hash)
         overlap = name_to_hash.keys() & seqs.keys()
         if force_unique_keys and overlap:
             msg = f"{overlap} already exist in collection"
@@ -705,6 +738,8 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         return result
 
     def _write(self, path: str | pathlib.Path, exclude_groups: set[str]) -> None:
+        # commit any deferred writes so duplicate_h5_file sees the latest state
+        self.flush()
         path = pathlib.Path(path).expanduser().absolute()
         curr_path = pathlib.Path(self._file.filename).absolute()
         if path == curr_path:
@@ -728,6 +763,41 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         """returns the HDF file"""
         return self._file
 
+    def flush(self) -> None:
+        """Write any dirty in-memory caches to the HDF5 file."""
+        if not self._dirty or not self.writable:
+            return
+        if self._index_loaded:
+            _set_name_to_hash_to_index(
+                self._file,
+                {
+                    k: (h, self._hash_to_index.get(h, -1))
+                    for k, h in self._name_to_hash.items()
+                },
+                compression=DEFAULT_COMPRESSION,
+            )
+        _set_offset(
+            self._file,
+            offset=self._offset_cache or {},
+            compression=DEFAULT_COMPRESSION,
+        )
+        _set_reversed_seqs(
+            self._file,
+            self._reversed_cache or frozenset(),
+            compression=DEFAULT_COMPRESSION,
+        )
+        # subclass hook for sparse aggregate datasets, no-op on the base
+        self._flush_extras()
+        # ensure h5py commits its own buffered metadata so a second handle
+        # opened on the same on-disk path observes the writes
+        self._file.flush()
+        self._dirty = False
+
+    def _flush_extras(self) -> None:
+        """Subclass hook. ``SparseSeqsData`` overrides to flush its diff
+        arrays alongside the metadata datasets.
+        """
+
     def close(self) -> None:
         """close the HDF file"""
         if not (self._file and self._file.id):
@@ -736,6 +806,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         if not self._attr_set:
             self._populate_attrs()
 
+        self.flush()
         self._file.close()
 
 

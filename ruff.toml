@@ -32,7 +32,7 @@ exclude = [
 line-length = 88
 indent-width = 4
 
-target-version = "py310"
+target-version = "py311"
 
 [lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
@@ -60,7 +60,7 @@ ignore = [
     "FBT002",
     "PT011",
     "ANN003",
-    ]
+]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -71,19 +71,20 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [lint.per-file-ignores]
 "tests/**/*.py" = [
-    "S101", # asserts allowed in tests...
+    "S101",   # asserts allowed in tests...
     "INP001", # __init__.py files are not required...
     "ANN",
     "N802",
     "N803",
-    "S608",  # sql injection unlikely
+    "S608",   # sql injection unlikely
+    "SLF001", # Allow private member access
 ]
 "noxfile.py" = [
-    "S101", # asserts allowed in tests...
+    "S101",   # asserts allowed in tests...
     "INP001", # __init__.py files are not required...
     "ANN",
     "N802",
-    "N803"
+    "N803",
 ]
 
 [format]

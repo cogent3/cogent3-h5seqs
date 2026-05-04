@@ -25,9 +25,7 @@ from .util import (
     StrORBytesORArray,
     _assign_attr_if_missing,
     _best_uint_dtype,
-    _get_name2hash_hash2idx,
     _restore_alphabet,
-    _set_offset,
     _valid_h5seqs,
     array_hash64,
     compose_gapped_seq,
@@ -83,6 +81,7 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             compression=compression,
         )
         self._primary_grp = self._gapped_grp
+        self._align_len: int | None = None
 
     @classmethod
     def _check_file(cls, file: h5py.File) -> None:
@@ -93,13 +92,19 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
     @property
     def align_len(self) -> int:
         """length of the alignment"""
-        if not self.names:
+        if self._align_len is not None:
+            return self._align_len
+        if not self._index_loaded:
+            self._ensure_index()
+        if not self._name_to_hash:
+            # genuinely empty — do NOT cache, first add_seqs will set it
             return 0
-        name = self.names[0]
-        return typing.cast(
+        seqhash = next(iter(self._name_to_hash.values()))
+        self._align_len = typing.cast(
             "numpy.ndarray",
-            self._file[f"{self._gapped_grp}/{self.get_hash(seqid=name)}"],
+            self._file[f"{self._gapped_grp}/{seqhash}"],
         ).shape[0]
+        return self._align_len
 
     def __len__(self) -> int:
         return self.align_len
@@ -474,7 +479,10 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
         """
         lengths = {len(seq) for seq in seqs.values()}
 
-        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+        # align_len returns 0 for an empty alignment (the "no constraint yet"
+        # state), so compare against 0 explicitly rather than using truthiness
+        existing_len = self.align_len
+        if len(lengths) > 1 or (existing_len > 0 and existing_len not in lengths):
             msg = f"not all lengths equal {lengths=}"
             raise ValueError(msg)
 
@@ -484,6 +492,9 @@ class AlignedSeqsData(UnalignedSeqsData, c3_alignment.AlignedSeqsDataABC):
             offset=offset,
             reversed_seqs=reversed_seqs,
         )
+        # opportunistic monotonic set: lengths is non-empty and uniform here
+        if self._align_len is None and lengths:
+            self._align_len = next(iter(lengths))
         return self
 
     def copy(
@@ -655,21 +666,6 @@ def _make_pointers(
     )
 
 
-def _update_sparse_elements(
-    *,
-    h5file: h5py.File,
-    new_elements: list[NumpyIntArrayType],
-    grp_name: str,
-    dtype: npt.DTypeLike,
-) -> NumpyIntArrayType:
-    old_elements = h5file.get(grp_name, [])[:]
-    if len(old_elements):
-        old_elements: list[NumpyIntArrayType] = [old_elements]
-
-    old_elements += new_elements
-    return numpy.concatenate(old_elements).astype(dtype)
-
-
 def _replace_grp_in_file(
     *,
     h5file: h5py.File,
@@ -725,8 +721,13 @@ class SparseSeqsData(AlignedSeqsData):
         self._primary_grp = self._gapped_grp
         self._ref_name = stored_ref_name or ref_name
         self._ref_hash: str = gapped_seqs.attrs.get("ref_hash", "")
-        self._seqhashes: dict[str, int] = {}
-        self._attr_from_file()
+        # _align_len is inherited from AlignedSeqsData with sentinel None
+        # sparse aggregate caches, populated lazily by _ensure_sparse_arrays
+        self._diff_indices_cache: NumpyIntArrayType | None = None
+        self._diff_vals_cache: SeqIntArrayType | None = None
+        self._seq_ptrs_cache: NumpyIntArrayType | None = None
+        self._var_pos_cache: NumpyIntArrayType | None = None
+        self._sparse_loaded: bool = False
 
     @property
     def _ref_seq(self) -> Dataset:
@@ -752,14 +753,6 @@ class SparseSeqsData(AlignedSeqsData):
     def _var_pos(self) -> Dataset:
         return typing.cast("Dataset", self._file[f"{self._var_pos_grp}"])
 
-    def _attr_from_file(self) -> None:
-        if not self._ref_hash:
-            return
-
-        n2h, h2i = _get_name2hash_hash2idx(self._file)
-        self._name_to_hash = n2h
-        self._hash_to_index = h2i
-
     def _set_ref_seq(self, ref_name: str, ref_seq: SeqIntArrayType) -> str:
         self._ref_name = ref_name
         _assign_attr_if_missing(self._file, "ref_name", ref_name)
@@ -774,17 +767,65 @@ class SparseSeqsData(AlignedSeqsData):
             shuffle=True,
         )
         self._name_to_hash[ref_name] = self._ref_hash
+        # ref-seq registration counts as a mutation that must persist
+        self._dirty = True
         return self._ref_hash
 
-    @property
-    def align_len(self) -> int:
-        """length of the alignment"""
-        if not self.names:
-            return 0
-        return typing.cast(
-            "numpy.ndarray",
-            self._file[f"{self._gapped_grp}/{self._ref_hash}"],
-        ).shape[0]
+    def _ensure_sparse_arrays(self) -> None:
+        """Lazily load four sparse aggregate datasets into in-memory."""
+        if self._sparse_loaded:
+            return
+        if self._diff_idx_grp in self._file:
+            self._diff_indices_cache = numpy.asarray(self._file[self._diff_idx_grp][:])
+        else:
+            self._diff_indices_cache = numpy.array([], dtype=numpy.uint8)
+        if self._diff_val_grp in self._file:
+            self._diff_vals_cache = numpy.asarray(self._file[self._diff_val_grp][:])
+        else:
+            self._diff_vals_cache = numpy.array([], dtype=numpy.uint8)
+        if self._seq_ptr_grp in self._file:
+            self._seq_ptrs_cache = numpy.asarray(self._file[self._seq_ptr_grp][:])
+        else:
+            self._seq_ptrs_cache = numpy.array([0], dtype=numpy.int64)
+        if self._var_pos_grp in self._file:
+            self._var_pos_cache = numpy.asarray(self._file[self._var_pos_grp][:])
+        else:
+            self._var_pos_cache = numpy.array([], dtype=numpy.int64)
+        self._sparse_loaded = True
+
+    def _flush_extras(self) -> None:
+        """Persist the sparse aggregate caches."""
+        if self._diff_indices_cache is None or self._diff_indices_cache.size == 0:
+            # nothing accumulated, could be a fresh instance with only a ref
+            # seq registered, or an existing file we never mutated
+            return
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._seq_ptr_grp,
+            new_value=self._seq_ptrs_cache,
+        )
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._diff_idx_grp,
+            new_value=self._diff_indices_cache,
+        )
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._diff_val_grp,
+            new_value=self._diff_vals_cache,
+        )
+        _replace_grp_in_file(
+            h5file=self._file,
+            compression=self._compress,
+            grp_name=self._var_pos_grp,
+            new_value=self._var_pos_cache,
+        )
+
+    # align_len inherited from AlignedSeqsData — uses self._gapped_grp + any
+    # hash from _name_to_hash, the ref seq is in _name_to_hash so this works
 
     def _seqs_to_sparse_arrays(
         self,
@@ -813,11 +854,14 @@ class SparseSeqsData(AlignedSeqsData):
             ref_seq = typing.cast(
                 "SeqIntArrayType", to_indices(seqs.pop(ref_name), validate=True)
             )
-            self._name_to_hash = {ref_name: self._set_ref_seq(ref_name, ref_seq)}
+            # _set_ref_seq seeds _name_to_hash with the ref entry and marks dirty
+            self._set_ref_seq(ref_name, ref_seq)
+            self._index_loaded = True
 
-        n2h, h2i = _get_name2hash_hash2idx(self._file)
-        name_to_hash = self._name_to_hash | n2h
-        hash_to_index = self._hash_to_index | h2i
+        if not self._index_loaded:
+            self._ensure_index()
+        name_to_hash = dict(self._name_to_hash)
+        hash_to_index = dict(self._hash_to_index)
 
         overlap = name_to_hash.keys() & seqs.keys()
         if force_unique_keys and overlap:
@@ -870,7 +914,8 @@ class SparseSeqsData(AlignedSeqsData):
             raise PermissionError(msg)
 
         lengths = {len(seq) for seq in seqs.values()}
-        if len(lengths) > 1 or (self.align_len and self.align_len not in lengths):
+        existing_len = self.align_len
+        if len(lengths) > 1 or (existing_len > 0 and existing_len not in lengths):
             msg = f"not all lengths equal {lengths=}"
             raise ValueError(msg)
 
@@ -885,69 +930,50 @@ class SparseSeqsData(AlignedSeqsData):
                 ref_name=ref_name,
             )
         )
+        # opportunistic monotonic align_len set
+        if self._align_len is None and lengths:
+            self._align_len = next(iter(lengths))
+
         if not diff_indices:
-            # no unique sequences
+            # no unique sequences — only metadata changes
             self._populate_optional_grps(
                 offset, reversed_seqs, name_to_hash, hash_to_index
             )
             return self
 
-        row_ptrs = _make_pointers(
-            old_pointers=self._file.get(self._seq_ptr_grp, None),
+        if not self._sparse_loaded:
+            self._ensure_sparse_arrays()
+
+        # all aggregate updates land in memory, flush() persists them
+        self._seq_ptrs_cache = _make_pointers(
+            old_pointers=self._seq_ptrs_cache,
             new_indices=diff_indices,
         )
-        _replace_grp_in_file(
-            h5file=self._file,
-            compression=self._compress,
-            grp_name=self._seq_ptr_grp,
-            new_value=row_ptrs,
-        )
 
-        # update the variant indices
-        min_dtype = _best_uint_dtype(max_index)
-        merged_indices = _update_sparse_elements(
-            h5file=self._file,
-            new_elements=diff_indices,
-            grp_name=self._diff_idx_grp,
-            dtype=min_dtype,
-        )
-        _replace_grp_in_file(
-            h5file=self._file,
-            compression=self._compress,
-            grp_name=self._diff_idx_grp,
-            new_value=merged_indices,
-        )
-
-        # update the variable position attribute
-        _replace_grp_in_file(
-            h5file=self._file,
-            grp_name=self._var_pos_grp,
-            compression=self._compress,
-            new_value=numpy.unique(self._diff_indices[:]),
-        )
-
-        # update the variant values
-        merged_vals = _update_sparse_elements(
-            h5file=self._file,
-            new_elements=diff_vals,
-            grp_name=self._diff_val_grp,
-            dtype=numpy.uint8,
-        )
-        _replace_grp_in_file(
-            h5file=self._file,
-            compression=self._compress,
-            grp_name=self._diff_val_grp,
-            new_value=merged_vals,
-        )
-
-        if offset := offset or {}:
-            _set_offset(
-                self._file,
-                offset=self.offset | offset,
-                compression=self._compress,
+        new_indices_concat = numpy.concatenate(diff_indices)
+        if self._diff_indices_cache is None or self._diff_indices_cache.size == 0:
+            self._diff_indices_cache = new_indices_concat.astype(
+                _best_uint_dtype(int(max_index))
             )
+        else:
+            target_dtype = _best_uint_dtype(
+                max(int(max_index), int(self._diff_indices_cache.max(initial=0)))
+            )
+            self._diff_indices_cache = numpy.concatenate([
+                self._diff_indices_cache,
+                new_indices_concat,
+            ]).astype(target_dtype)
 
-        del merged_indices, merged_vals
+        new_vals_concat = numpy.concatenate(diff_vals).astype(numpy.uint8)
+        if self._diff_vals_cache is None or self._diff_vals_cache.size == 0:
+            self._diff_vals_cache = new_vals_concat
+        else:
+            self._diff_vals_cache = numpy.concatenate([
+                self._diff_vals_cache,
+                new_vals_concat,
+            ])
+
+        self._var_pos_cache = numpy.unique(self._diff_indices_cache)
 
         self._populate_optional_grps(offset, reversed_seqs, name_to_hash, hash_to_index)
         return self
@@ -959,17 +985,21 @@ class SparseSeqsData(AlignedSeqsData):
         stop: int,
         step: int,
     ) -> SeqIntArrayType:
-        seqhash = self.get_hash(seqid=seqid)
+        if not self._index_loaded:
+            self._ensure_index()
+        seqhash = self._name_to_hash[seqid]
         if seqhash == self._ref_hash:
             return typing.cast("SeqIntArrayType", self._ref_seq)[start:stop:step]
 
+        if not self._sparse_loaded:
+            self._ensure_sparse_arrays()
         index = self._hash_to_index[seqhash]
         seqarray = _inflate_seq(
             index=index,
             ref_seq=typing.cast("SeqIntArrayType", self._ref_seq[:]),
-            all_indices=self._diff_indices[:],
-            all_values=self._diff_vals[:],
-            row_ptrs=self._seq_ptrs[:],
+            all_indices=self._diff_indices_cache,
+            all_values=self._diff_vals_cache,
+            row_ptrs=self._seq_ptrs_cache,
         )
         return seqarray[start:stop:step]
 
@@ -995,12 +1025,14 @@ class SparseSeqsData(AlignedSeqsData):
         array_seqs = numpy.tile(
             typing.cast("SeqIntArrayType", self._ref_seq)[start:stop], (len(names), 1)
         )
-        if self._diff_idx_grp not in self._file:
+        if not self._sparse_loaded:
+            self._ensure_sparse_arrays()
+        if self._diff_indices_cache is None or self._diff_indices_cache.size == 0:
             return array_seqs[:, ::step]
 
-        all_indices = self._diff_indices[:]
-        all_values = self._diff_vals[:]
-        seq_ptrs = self._seq_ptrs[:]
+        all_indices = self._diff_indices_cache
+        all_values = self._diff_vals_cache
+        seq_ptrs = self._seq_ptrs_cache
         for index, name in enumerate(names):
             seqhash = self._name_to_hash[name]
             if seqhash == self._ref_hash:
@@ -1077,11 +1109,13 @@ class SparseSeqsData(AlignedSeqsData):
             selected_hashes[h] = i
 
         hash_indices = numpy.array(sorted(selected_hashes.values()), dtype=numpy.int64)
+        if not self._sparse_loaded:
+            self._ensure_sparse_arrays()
         subalign = extract_subalignment(
             ref_seq=typing.cast("npt.NDArray", self._ref_seq[:]),
-            all_indices=typing.cast("npt.NDArray", self._diff_indices[:]),
-            all_vals=typing.cast("npt.NDArray", self._diff_vals[:]),
-            seq_ptrs=typing.cast("npt.NDArray", self._seq_ptrs[:]),
+            all_indices=typing.cast("npt.NDArray", self._diff_indices_cache),
+            all_vals=typing.cast("npt.NDArray", self._diff_vals_cache),
+            seq_ptrs=typing.cast("npt.NDArray", self._seq_ptrs_cache),
             seq_ids=hash_indices,
             positions=numpy.array(positions),
             ref_present=ref_present,
@@ -1122,11 +1156,15 @@ class SparseSeqsData(AlignedSeqsData):
         Absolute indices (as distinct from an index relative to start) of
         variable positions.
         """
+        if not self._index_loaded:
+            self._ensure_index()
         if len(names) < 2 or not self._hash_to_index:
             # no seqs, too few, or all identical
             return numpy.array([], dtype=numpy.int64)
 
-        var_pos = self._var_pos[:]
+        if not self._sparse_loaded:
+            self._ensure_sparse_arrays()
+        var_pos = self._var_pos_cache
         if start is None and stop is None and step is None:
             return var_pos
 

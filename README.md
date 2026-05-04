@@ -1,6 +1,7 @@
 [![CI](https://github.com/cogent3/cogent3-h5seqs/actions/workflows/ci.yml/badge.svg)](https://github.com/cogent3/cogent3-h5seqs/actions/workflows/ci.yml)
 [![Coverage Status](https://coveralls.io/repos/github/cogent3/cogent3-h5seqs/badge.svg?branch=develop)](https://coveralls.io/github/cogent3/cogent3-h5seqs?branch=develop)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/e1ccd586446246bfa38f7b72e0b325af)](https://app.codacy.com/gh/cogent3/cogent3-h5seqs/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 
 # cogent3-h5seqs: a HDF5 storage driver for cogent3 sequence collections
 

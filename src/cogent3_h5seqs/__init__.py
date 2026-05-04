@@ -80,6 +80,11 @@ def write_seqs_data(
         )
     ):
         storage = seqcoll.storage
+        # storage.flush() commits any deferred Python-level metadata writes
+        # into the HDF5 datasets, storage.h5file.flush() then commits h5py's
+        # own buffered writes so the in-memory file image reflects them.
+        # Both calls are required and target different layers.
+        storage.flush()
         storage.h5file.flush()
         image = storage.h5file.id.get_file_image()
         with open(path, "wb") as out_file:
