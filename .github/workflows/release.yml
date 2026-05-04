@@ -25,13 +25,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: "Installs for ${{ matrix.python-version }}"
-        run: |
-          uv venv venv -p python${{ matrix.python-version }}
-          uv tool install -p venv nox
-
       - name: "Run nox for ${{ matrix.python-version }}"
-        run: "nox -db uv  --force-python python -s test"
+        run: uv run --group dev nox --force-python python -s test
 
   build:
     name: Build wheel and sdist
@@ -39,21 +34,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.13.3'
-      
-      - name: Install build dependency
-        run: |
-          pip install build
-          pip install --upgrade pip
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
       - name: Build sdist and wheel
-        run: python -m build --wheel --sdist
+        run: uv build
 
       - name: Upload sdist and wheel
         uses: actions/upload-artifact@v7
