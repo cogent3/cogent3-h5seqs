@@ -60,6 +60,8 @@ norecursedirs = ["doc", ".nox"]
 
 [tool.uv]
 reinstall-package = ["cogent3-h5seqs"]
+# Minimize the risk of supply chain attacks
+exclude-newer = "7 days"
 
 [project.entry-points."cogent3.storage.unaligned_seqs"]
 h5seqs_unaligned = "cogent3_h5seqs:UnalignedSeqsData"

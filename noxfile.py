@@ -6,6 +6,8 @@ _py_versions = range(10, 15)
 # on python >= 3.12 this will improve speed of test coverage a lot
 os.environ["COVERAGE_CORE"] = "sysmon"
 
+nox.options.reuse_existing_virtualenvs = True
+
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def test(session):
