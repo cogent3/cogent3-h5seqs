@@ -50,8 +50,14 @@ path = "src/cogent3_h5seqs/__init__.py"
 # until we have a released version of cogent3 supporting drivers
 allow-direct-references = true
 
-[project.optional-dependencies]
-dev = ["nox>=2025.2.9", "pytest>=8.3.5", "pytest-cov>=6.1.1", "ruff>=0.12.9"]
+[dependency-groups]
+dev = [
+    "nox>=2026.4.10",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.12",
+    "mypy",
+]
 
 [tool.pytest.ini_options]
 testpaths = "tests"
