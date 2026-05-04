@@ -1,5 +1,7 @@
 """Shared utilities for cogent3-h5seqs."""
 
+from __future__ import annotations
+
 import contextlib
 import pathlib
 import typing
@@ -12,6 +14,7 @@ import xxhash
 from cogent3.core import alphabet as c3_alphabet
 
 if typing.TYPE_CHECKING:  # pragma: no cover
+    from cogent3.core import moltype as c3_moltype
     from cogent3.core.alignment import Alignment, SequenceCollection
 
 # following imports are for re-exporting, used by other modules
@@ -267,7 +270,7 @@ def duplicate_h5_file(
 def _restore_alphabet(
     *,
     chars: bytes | str,
-    moltype: str,
+    moltype: c3_moltype.MolType,
     gap: StrOrBytes | None,
     missing: StrOrBytes | None,
 ) -> c3_alphabet.CharAlphabet:

@@ -8,9 +8,9 @@ authors = [{ name = "Gavin Huttley", email = "Gavin.Huttley@anu.edu.au" }]
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "cogent3>=2026.1.20a1",
-    "h5py>=3.13.0",
-    "numpy>=2.2.4",
-    "typing-extensions>=4.13.2",
+    "h5py>=3.16.0",
+    "numpy>=2.4.4",
+    "typing-extensions>=4.15.0",
     "xxhash",
 ]
 keywords = [
@@ -50,8 +50,14 @@ path = "src/cogent3_h5seqs/__init__.py"
 # until we have a released version of cogent3 supporting drivers
 allow-direct-references = true
 
-[project.optional-dependencies]
-dev = ["nox>=2025.2.9", "pytest>=8.3.5", "pytest-cov>=6.1.1", "ruff>=0.12.9"]
+[dependency-groups]
+dev = [
+    "nox>=2026.4.10",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.12",
+    "mypy",
+]
 
 [tool.pytest.ini_options]
 testpaths = "tests"
@@ -62,6 +68,10 @@ norecursedirs = ["doc", ".nox"]
 reinstall-package = ["cogent3-h5seqs"]
 # Minimize the risk of supply chain attacks
 exclude-newer = "7 days"
+
+[[tool.mypy.overrides]]
+module = ["numba", "h5py", "h5py.*", "xxhash"]
+ignore_missing_imports = true
 
 [project.entry-points."cogent3.storage.unaligned_seqs"]
 h5seqs_unaligned = "cogent3_h5seqs:UnalignedSeqsData"
