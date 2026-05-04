@@ -89,9 +89,7 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         self._hash_to_index: dict[str, int] = {}
         self._index_loaded: bool = False
         self._offset_cache: dict[str, int] | None = dict(offset) if offset else None
-        self._reversed_cache: frozenset[str] | None = (
-            reversed_seqs if reversed_seqs else None
-        )
+        self._reversed_cache: frozenset[str] | None = reversed_seqs or None
         self._dirty: bool = bool(offset) or bool(reversed_seqs)
 
         # Determine whether to use 2-bit packed encoding

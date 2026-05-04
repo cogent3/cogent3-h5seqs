@@ -959,19 +959,23 @@ class SparseSeqsData(AlignedSeqsData):
             target_dtype = _best_uint_dtype(
                 max(int(max_index), int(self._diff_indices_cache.max(initial=0)))
             )
-            self._diff_indices_cache = numpy.concatenate([
-                self._diff_indices_cache,
-                new_indices_concat,
-            ]).astype(target_dtype)
+            self._diff_indices_cache = numpy.concatenate(
+                [
+                    self._diff_indices_cache,
+                    new_indices_concat,
+                ]
+            ).astype(target_dtype)
 
         new_vals_concat = numpy.concatenate(diff_vals).astype(numpy.uint8)
         if self._diff_vals_cache is None or self._diff_vals_cache.size == 0:
             self._diff_vals_cache = new_vals_concat
         else:
-            self._diff_vals_cache = numpy.concatenate([
-                self._diff_vals_cache,
-                new_vals_concat,
-            ])
+            self._diff_vals_cache = numpy.concatenate(
+                [
+                    self._diff_vals_cache,
+                    new_vals_concat,
+                ]
+            )
 
         self._var_pos_cache = numpy.unique(self._diff_indices_cache)
 
