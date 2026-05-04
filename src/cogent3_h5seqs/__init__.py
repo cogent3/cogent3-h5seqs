@@ -17,24 +17,24 @@ from .aligned import (
     SparseSeqsData,
     load_seqs_data_aligned,
     load_seqs_data_sparse,
-    make_aligned,
-    make_sparse,
+    make_aligned,  # noqa: F401
+    make_sparse,  # noqa: F401
 )
 
 # Re-export from unaligned
 from .unaligned import (
     UnalignedSeqsData,
     load_seqs_data_unaligned,
-    make_unaligned,
+    make_unaligned,  # noqa: F401
 )
 from .util import (
     ALIGNED_SUFFIX,
-    DEFAULT_COMPRESSION,
+    DEFAULT_COMPRESSION,  # noqa: F401
     SPARSE_SUFFIX,
     UNALIGNED_SUFFIX,
     SeqCollTypes,
-    duplicate_h5_file,
-    open_h5_file,
+    duplicate_h5_file,  # noqa: F401
+    open_h5_file,  # noqa: F401
 )
 
 
