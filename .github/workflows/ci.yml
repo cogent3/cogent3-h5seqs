@@ -68,7 +68,7 @@ jobs:
 
       - name: "Run Type Checking for ${{ matrix.python-version }}"
         run: |
-          uv run --group test nox --force-python python -s type_check
+          uv run --group dev nox --force-python python -s type_check
 
   finish:
     name: "Finish Coveralls"
