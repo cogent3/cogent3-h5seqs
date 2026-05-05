@@ -196,8 +196,15 @@ class UnalignedSeqsData(c3_alignment.SeqsDataABC):
         self._attr_set = True
 
     def _ensure_index(self) -> None:
-        """Lazily decode the on-disk name_to_hash into in-memory caches."""
-        if self._index_loaded:
+        """Lazily decode the on-disk name_to_hash into in-memory caches.
+
+        Callers should gate with ``if not self._index_loaded`` to avoid
+        the function-call overhead when already loaded. The early-return
+        below is a defensive guard for callers that forget the gate.
+        """
+        # defensive: every caller already gates, so this branch is
+        # unreachable under normal use and excluded from coverage
+        if self._index_loaded:  # pragma: no cover
             return
         n2h, h2i = _get_name2hash_hash2idx(self._file)
         # dict insertion order matches the on-disk dataset order

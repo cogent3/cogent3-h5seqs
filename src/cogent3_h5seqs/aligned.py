@@ -651,7 +651,7 @@ def _inflate_seq(
 def _make_pointers(
     *,
     new_indices: list[NumpyIntArrayType],
-    old_pointers: Dataset | None = None,
+    old_pointers: NumpyIntArrayType,
 ) -> NumpyIntArrayType:
     # we are representing a multiple alignment as a sparse matrix
     # the first row is complete
@@ -659,12 +659,8 @@ def _make_pointers(
     # that differ from the first row
     # "pointers" record how many differences per seq and allow us to
     # slice out each "seq" for reassembly
-    if old_pointers is None:
-        start = 0
-        old_pointers = numpy.array([0], dtype=numpy.int64)
-    else:
-        old_pointers = numpy.asarray(old_pointers)
-        start = old_pointers[-1]
+    old_pointers = numpy.asarray(old_pointers)
+    start = old_pointers[-1]
 
     num_diffs = [len(idx) for idx in new_indices]
     # create the offsets given last value from old pointers
@@ -745,22 +741,6 @@ class SparseSeqsData(AlignedSeqsData):
             raise ValueError(msg)
         return typing.cast("Dataset", self._file[dataset])
 
-    @property
-    def _seq_ptrs(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._seq_ptr_grp}"])
-
-    @property
-    def _diff_vals(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._diff_val_grp}"])
-
-    @property
-    def _diff_indices(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._diff_idx_grp}"])
-
-    @property
-    def _var_pos(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._var_pos_grp}"])
-
     def _set_ref_seq(self, ref_name: str, ref_seq: SeqIntArrayType) -> str:
         self._ref_name = ref_name
         _assign_attr_if_missing(self._file, "ref_name", ref_name)
@@ -780,8 +760,15 @@ class SparseSeqsData(AlignedSeqsData):
         return self._ref_hash
 
     def _ensure_sparse_arrays(self) -> None:
-        """Lazily load four sparse aggregate datasets into in-memory."""
-        if self._sparse_loaded:
+        """Lazily load four sparse aggregate datasets into in-memory.
+
+        Callers should gate with ``if not self._sparse_loaded`` to avoid
+        the function-call overhead when already loaded. The early-return
+        below is a defensive guard for callers that forget the gate.
+        """
+        # defensive: every caller already gates, so this branch is
+        # unreachable under normal use and excluded from coverage
+        if self._sparse_loaded:  # pragma: no cover
             return
         if self._diff_idx_grp in self._file:
             self._diff_indices_cache = numpy.asarray(self._file[self._diff_idx_grp][:])
@@ -866,7 +853,9 @@ class SparseSeqsData(AlignedSeqsData):
             self._set_ref_seq(ref_name, ref_seq)
             self._index_loaded = True
 
-        if not self._index_loaded:
+        # defensive: add_seqs accesses self.align_len before reaching here,
+        # which loads the index. Retained for callers that bypass align_len.
+        if not self._index_loaded:  # pragma: no cover
             self._ensure_index()
         name_to_hash = dict(self._name_to_hash)
         hash_to_index = dict(self._hash_to_index)
@@ -997,7 +986,10 @@ class SparseSeqsData(AlignedSeqsData):
         stop: int,
         step: int,
     ) -> SeqIntArrayType:
-        if not self._index_loaded:
+        # defensive: get_gapped_seq_array calls self._invalid_seqids before
+        # reaching here, which loads the index via self.names. Retained for
+        # callers that bypass the public wrapper.
+        if not self._index_loaded:  # pragma: no cover
             self._ensure_index()
         seqhash = self._name_to_hash[seqid]
         if seqhash == self._ref_hash:

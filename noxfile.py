@@ -36,7 +36,7 @@ def test(session):
 
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
-def test_cov(session):
+def testcov(session):
     session.install("-e", ".", "--group", "dev")
     # doctest modules within cogent3/app
     session.run(
@@ -46,4 +46,5 @@ def test_cov(session):
         "--cov",
         "cogent3_h5seqs",
         ".",
+        *session.posargs,
     )
