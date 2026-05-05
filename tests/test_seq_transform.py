@@ -22,7 +22,7 @@ from cogent3_h5seqs.seq_transform import (
     ],
 )
 def test_count_non_canonical_runs(seq_str, expected_count):
-    """Test counting runs of non-canonical characters"""
+    # Test counting runs of non-canonical characters
     s = c3.make_seq(seq_str, moltype="dna")
     sarr = s.to_array()
     _, count = count_bases_non_canonical_runs(sarr)
@@ -92,7 +92,7 @@ def test_packed_and_ambig_coords():
 
 
 def test_unpack_nucleic_basic():
-    """Test unpacking reconstructs the original sequence"""
+    # Test unpacking reconstructs the original sequence
     #    012  34 56789
     s = c3.make_seq("ACGNNGTYAGGTT", moltype="dna")
     sarr = s.to_array()
@@ -108,7 +108,7 @@ def test_unpack_nucleic_basic():
 
 
 def test_unpack_nucleic_no_ambiguity(seq_no_ambiguity):
-    """Test unpacking sequence with no non-canonical characters"""
+    # Test unpacking sequence with no non-canonical characters
     sarr, packed, positions, length = seq_no_ambiguity
 
     unpacked = unpack_nucleic(packed, positions, length)
@@ -118,7 +118,7 @@ def test_unpack_nucleic_no_ambiguity(seq_no_ambiguity):
 
 
 def test_unpack_nucleic_all_ambiguity():
-    """Test unpacking sequence with only non-canonical characters"""
+    # Test unpacking sequence with only non-canonical characters
     s = c3.make_seq("NNNN", moltype="dna")
     sarr = s.to_array()
 
@@ -131,7 +131,7 @@ def test_unpack_nucleic_all_ambiguity():
 
 @pytest.mark.parametrize("seq_str", ["A", "N"])
 def test_unpack_nucleic_single_base(seq_str):
-    """Test unpacking single base sequences"""
+    # Test unpacking single base sequences
     # Single canonical base
     s1 = c3.make_seq(seq_str, moltype="dna")
     sarr1 = s1.to_array()
@@ -141,7 +141,7 @@ def test_unpack_nucleic_single_base(seq_str):
 
 
 def test_adjacent_different_ambiguity_runs():
-    """Test adjacent runs of different ambiguity characters (ACGGNNNYYTG)"""
+    # Test adjacent runs of different ambiguity characters (ACGGNNNYYTG)
     s = c3.make_seq("ACGGNNNYYTG", moltype="dna")
     sarr = s.to_array()
 
@@ -207,7 +207,7 @@ def test_pack_unpack_roundtrip(seq_str):
     ],
 )
 def test_unpack_nucleic_slice_no_ambiguity(seq_no_ambiguity_long, start, stop):
-    """Test slicing for sequences without ambiguity characters"""
+    # Test slicing for sequences without ambiguity characters
     sarr, packed, positions, length = seq_no_ambiguity_long
 
     unpacked = unpack_nucleic(packed, positions, length, start=start, stop=stop)
@@ -241,7 +241,7 @@ def test_unpack_nucleic_slice_no_ambiguity(seq_no_ambiguity_long, start, stop):
     ],
 )
 def test_unpack_nucleic_slice_with_ambiguity(seq_with_ambiguity, start, stop):
-    """Test slicing for sequences with ambiguity characters"""
+    # Test slicing for sequences with ambiguity characters
     sarr, packed, positions, length = seq_with_ambiguity
 
     unpacked = unpack_nucleic(packed, positions, length, start=start, stop=stop)

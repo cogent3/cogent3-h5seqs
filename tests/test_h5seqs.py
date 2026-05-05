@@ -1407,7 +1407,7 @@ def test_make_seqs_invalid_chars():
     [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
 )
 def test_get_pos_range_identical_seqs(suffix, dna_alpha):
-    """correctly identify variable positions"""
+    # correctly identify variable positions
     seq = "GCGAC"
     new_seqs = {"A": seq, "B": seq, "C": seq}
     obj = c3h5_make_funcs[suffix](
@@ -1418,7 +1418,7 @@ def test_get_pos_range_identical_seqs(suffix, dna_alpha):
 
 
 def test_omit_bad_seqs():
-    """omit_bad_seqs should return alignment w/o seqs causing most gaps"""
+    # omit_bad_seqs should return alignment w/o seqs causing most gaps
     data = {
         "s1": "---ACC---TT-",
         "s2": "---ACC---TT-",
@@ -1459,7 +1459,7 @@ def test_aln_multi_add_seqs(suffix):
     [cogent3_h5seqs.SPARSE_SUFFIX, cogent3_h5seqs.ALIGNED_SUFFIX],
 )
 def test_counts_per_seq_bytes_moltype(suffix):
-    """produce correct counts per seq with text moltypes"""
+    # produce correct counts per seq with text moltypes
     data = {"a": "AAAA??????", "b": "CCCGGG--NN", "c": "CCGGTTCCAA"}
     coll = cogent3.make_aligned_seqs(data, moltype="bytes", storage_backend=suffix)
     got = coll.counts_per_seq(include_ambiguity=True, allow_gap=True)
@@ -1737,7 +1737,7 @@ def test_made_seq_offset(suffix, name):
 
 
 def test_packed_encoding_no_ambiguity(dna_alpha):
-    """Test 2-bit packed encoding for nucleic sequences without ambiguity codes"""
+    # Test 2-bit packed encoding for nucleic sequences without ambiguity codes
     s1 = "ACGTACGT"
     s2 = "TGGGCAGTA"
     data = {"s1": s1, "s2": s2}
@@ -1751,7 +1751,7 @@ def test_packed_encoding_no_ambiguity(dna_alpha):
 
 
 def test_packed_encoding_with_ambiguity(dna_alpha):
-    """Test 2-bit packed encoding for nucleic sequences with ambiguity codes"""
+    # Test 2-bit packed encoding for nucleic sequences with ambiguity codes
     s1 = "ACGNNGTYAGGTT"
     s2 = "NNACGTNN"
     data = {"s1": s1, "s2": s2}
@@ -1766,7 +1766,7 @@ def test_packed_encoding_with_ambiguity(dna_alpha):
 
 
 def test_packed_encoding_slicing(dna_alpha):
-    """Test slicing works correctly with packed encoding"""
+    # Test slicing works correctly with packed encoding
     data = {"s1": "ACGTACGTACGT", "s2": "ACGNNGTYAGGTT"}
     seqs = cogent3_h5seqs.make_unaligned(
         None, data=data, in_memory=True, alphabet=dna_alpha
@@ -1782,7 +1782,7 @@ def test_packed_encoding_slicing(dna_alpha):
 
 
 def test_packed_override_false(dna_alpha):
-    """Test packed=False override for nucleic sequences"""
+    # Test packed=False override for nucleic sequences
     data = {"s1": "ACGTACGT", "s2": "TGGGCAGTA"}
     seqs = cogent3_h5seqs.make_unaligned(
         None, data=data, in_memory=True, alphabet=dna_alpha, packed=False
@@ -1795,7 +1795,7 @@ def test_packed_override_false(dna_alpha):
 
 
 def test_packed_disabled_for_non_nucleic():
-    """Test that packed encoding is disabled for non-nucleic moltypes"""
+    # Test that packed encoding is disabled for non-nucleic moltypes
     text_alpha = cogent3.get_moltype("text").most_degen_alphabet()
     data = {"s1": "HELLO", "s2": "WORLD"}
     seqs = cogent3_h5seqs.make_unaligned(
@@ -1808,7 +1808,7 @@ def test_packed_disabled_for_non_nucleic():
 
 
 def test_packed_file_roundtrip(dna_alpha, tmp_path):
-    """Test writing and reading packed file from disk"""
+    # Test writing and reading packed file from disk
     data = {"s1": "ACGTACGT", "s2": "ACGNNGTYAGGTT"}
     path = tmp_path / "packed.c3h5u"
 
@@ -1823,7 +1823,7 @@ def test_packed_file_roundtrip(dna_alpha, tmp_path):
 
 
 def test_packed_storage_efficiency(dna_alpha, tmp_path):
-    """Test that packed encoding uses ~25% of unpacked storage for canonical bases"""
+    # Test that packed encoding uses ~25% of unpacked storage for canonical bases
     rng = numpy.random.default_rng(42)
     seq_length = 100_000
     bases = numpy.array(list("ACGT"))
