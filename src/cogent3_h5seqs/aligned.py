@@ -651,7 +651,7 @@ def _inflate_seq(
 def _make_pointers(
     *,
     new_indices: list[NumpyIntArrayType],
-    old_pointers: Dataset | None = None,
+    old_pointers: NumpyIntArrayType,
 ) -> NumpyIntArrayType:
     # we are representing a multiple alignment as a sparse matrix
     # the first row is complete
@@ -659,12 +659,8 @@ def _make_pointers(
     # that differ from the first row
     # "pointers" record how many differences per seq and allow us to
     # slice out each "seq" for reassembly
-    if old_pointers is None:
-        start = 0
-        old_pointers = numpy.array([0], dtype=numpy.int64)
-    else:
-        old_pointers = numpy.asarray(old_pointers)
-        start = old_pointers[-1]
+    old_pointers = numpy.asarray(old_pointers)
+    start = old_pointers[-1]
 
     num_diffs = [len(idx) for idx in new_indices]
     # create the offsets given last value from old pointers
@@ -744,22 +740,6 @@ class SparseSeqsData(AlignedSeqsData):
             msg = "Reference sequence not found"
             raise ValueError(msg)
         return typing.cast("Dataset", self._file[dataset])
-
-    @property
-    def _seq_ptrs(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._seq_ptr_grp}"])
-
-    @property
-    def _diff_vals(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._diff_val_grp}"])
-
-    @property
-    def _diff_indices(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._diff_idx_grp}"])
-
-    @property
-    def _var_pos(self) -> Dataset:
-        return typing.cast("Dataset", self._file[f"{self._var_pos_grp}"])
 
     def _set_ref_seq(self, ref_name: str, ref_seq: SeqIntArrayType) -> str:
         self._ref_name = ref_name
