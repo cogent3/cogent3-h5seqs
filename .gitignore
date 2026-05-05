@@ -1,10 +1,12 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-.venv
-.mypy_cache/*
+*
+!src/**/*.py
+!tests/**/*.py
+!pyproject.toml
+!ruff.toml
+!uv.lock
+!.gitignore
+!.hgignore
+!.sourcery.yaml
+!noxfile.py
+!README.md
+!.github/**/*.yml
