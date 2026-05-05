@@ -760,8 +760,15 @@ class SparseSeqsData(AlignedSeqsData):
         return self._ref_hash
 
     def _ensure_sparse_arrays(self) -> None:
-        """Lazily load four sparse aggregate datasets into in-memory."""
-        if self._sparse_loaded:
+        """Lazily load four sparse aggregate datasets into in-memory.
+
+        Callers should gate with ``if not self._sparse_loaded`` to avoid
+        the function-call overhead when already loaded. The early-return
+        below is a defensive guard for callers that forget the gate.
+        """
+        # defensive: every caller already gates, so this branch is
+        # unreachable under normal use and excluded from coverage
+        if self._sparse_loaded:  # pragma: no cover
             return
         if self._diff_idx_grp in self._file:
             self._diff_indices_cache = numpy.asarray(self._file[self._diff_idx_grp][:])
@@ -846,7 +853,9 @@ class SparseSeqsData(AlignedSeqsData):
             self._set_ref_seq(ref_name, ref_seq)
             self._index_loaded = True
 
-        if not self._index_loaded:
+        # defensive: add_seqs accesses self.align_len before reaching here,
+        # which loads the index. Retained for callers that bypass align_len.
+        if not self._index_loaded:  # pragma: no cover
             self._ensure_index()
         name_to_hash = dict(self._name_to_hash)
         hash_to_index = dict(self._hash_to_index)
@@ -977,7 +986,10 @@ class SparseSeqsData(AlignedSeqsData):
         stop: int,
         step: int,
     ) -> SeqIntArrayType:
-        if not self._index_loaded:
+        # defensive: get_gapped_seq_array calls self._invalid_seqids before
+        # reaching here, which loads the index via self.names. Retained for
+        # callers that bypass the public wrapper.
+        if not self._index_loaded:  # pragma: no cover
             self._ensure_index()
         seqhash = self._name_to_hash[seqid]
         if seqhash == self._ref_hash:
