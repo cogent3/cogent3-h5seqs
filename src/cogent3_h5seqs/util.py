@@ -88,7 +88,9 @@ def open_h5_file(
     mode = "w-" if in_memory else mode
     # because h5py automatically uses an in-memory file
     # with the provided name if it already exists, we make a random name
-    path = uuid.uuid4().hex if in_memory or not path else path
+    path = (
+        uuid.uuid4().hex if in_memory or not path else pathlib.Path(path).expanduser()
+    )
     mode = "w-" if mode == "w" else mode
     h5_kwargs = (
         {

@@ -54,7 +54,7 @@ def write_seqs_data(
     sparse_suffix: str = SPARSE_SUFFIX,
     **kwargs,
 ) -> pathlib.Path:
-    path = pathlib.Path(path)
+    path = pathlib.Path(path).expanduser()
     supported_suffixes = {
         aligned_suffix: c3_alignment.Alignment,
         unaligned_suffix: c3_alignment.SequenceCollection,

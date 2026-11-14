@@ -2311,6 +2311,51 @@ def test_path_of_store_in_memory(suffix, dna_alpha):
     assert store.path is None
 
 
+@pytest.fixture
+def home_dir(tmp_path, monkeypatch):
+    # expanduser reads HOME on POSIX and USERPROFILE on Windows
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    return tmp_path
+
+
+@pytest.mark.parametrize("path_type", [str, pathlib.Path])
+@pytest.mark.parametrize("suffix", _all_suffixes)
+def test_load_from_home_dir(suffix, path_type, home_dir):
+    name = f"x.{suffix}"
+    data = {"s1": "ACGG", "s2": "TGGA"}
+    c3_make_funcs[suffix](data, moltype="dna").write(home_dir / name)
+    store = c3h5_load_funcs[suffix](path_type(f"~/{name}"), mode="r")
+    assert store.path == (home_dir / name).resolve()
+    assert store.names == ("s1", "s2")
+
+
+@pytest.mark.parametrize("path_type", [str, pathlib.Path])
+@pytest.mark.parametrize("suffix", _all_suffixes)
+def test_make_in_home_dir(suffix, path_type, dna_alpha, home_dir):
+    name = f"x.{suffix}"
+    c3h5_make_funcs[suffix](
+        path_type(f"~/{name}"), data={"s1": "ACGT"}, alphabet=dna_alpha, mode="w"
+    ).close()
+    assert (home_dir / name).exists()
+
+
+@pytest.mark.parametrize("path_type", [str, pathlib.Path])
+@pytest.mark.parametrize(
+    "suffix", [cogent3_h5seqs.ALIGNED_SUFFIX, cogent3_h5seqs.SPARSE_SUFFIX]
+)
+def test_unchanged_copy_to_home_dir(suffix, path_type, home_dir):
+    src = home_dir / f"src.{suffix}"
+    c3_make_funcs[suffix]({"s1": "ACGG", "s2": "TGGA"}, moltype="dna").write(src)
+    coll = c3_load_funcs[suffix](src, moltype="dna")
+    assert not coll.modified
+    coll.write(path_type(f"~/copy.{suffix}"))
+    assert sorted(p.name for p in home_dir.iterdir()) == [
+        f"copy.{suffix}",
+        f"src.{suffix}",
+    ]
+
+
 @pytest.mark.parametrize("suffix", _all_suffixes)
 def test_pickle_after_change_of_directory(suffix, dna_alpha, tmp_path, monkeypatch):
     dir_a = tmp_path / "a"
